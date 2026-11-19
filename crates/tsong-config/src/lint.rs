@@ -42,18 +42,24 @@ impl Config {
         }
         for route in &self.routes {
             let name = &route.name;
-            for (field, values) in [
-                ("allowed_audiences", &route.allowed_audiences),
-                ("allowed_scopes", &route.allowed_scopes),
+            for (field, values, accepted) in [
+                (
+                    "audiences.allow",
+                    &route.audiences.allow,
+                    "any audience outside audiences.deny is accepted",
+                ),
+                (
+                    "allowed_scopes",
+                    &route.allowed_scopes,
+                    "any value is accepted",
+                ),
             ] {
                 if values.is_empty() {
                     warnings.push(format!(
                         "route {name:?}: {field} is empty; every request will be denied"
                     ));
                 } else if values.iter().any(|value| value == ANY) {
-                    warnings.push(format!(
-                        "route {name:?}: {field} has \"*\"; any value is accepted"
-                    ));
+                    warnings.push(format!("route {name:?}: {field} has \"*\"; {accepted}"));
                 }
             }
             if let Some(allow) = &route.allow {

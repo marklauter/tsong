@@ -290,9 +290,8 @@ pub struct Route {
     /// Added to the `aud` of tokens minted for this route. Empty adds
     /// nothing.
     pub append_audience: String,
-    /// The inbound `aud` values the route accepts: the inbound token must
-    /// carry one. Empty denies every token; `"*"` accepts any.
-    pub allowed_audiences: Vec<String>,
+    /// Which inbound `aud` values the route accepts, requires and denies.
+    pub audiences: AudiencePolicy,
     /// The inbound scopes the route accepts: every scope the inbound token
     /// carries must be one. Empty denies every token; `"*"` accepts any.
     pub allowed_scopes: Vec<String>,
@@ -314,6 +313,51 @@ pub struct Route {
     pub read_timeout: Option<Duration>,
 }
 
+/// A route's audience policy, checked against the subject token's `aud`
+/// values once the token is validated. Every check runs; the minted token's
+/// audiences are not affected.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudiencePolicy {
+    /// The audiences the token may carry: at least one of them, and none
+    /// outside them. Empty denies every token; `"*"`, alone, allows any
+    /// audience, and then only `deny` narrows it.
+    pub allow: Vec<String>,
+    /// The audiences the token must all carry. Each must be one `allow`
+    /// admits. Empty or unset requires none.
+    #[serde(default)]
+    pub require: Vec<String>,
+    /// The audiences the token may not carry. Each must be one `allow`
+    /// admits, since a deny on any other value would never apply. Empty or
+    /// unset denies none.
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+impl AudiencePolicy {
+    /// Whether `allow` admits `audience`.
+    pub fn allows(&self, audience: &str) -> bool {
+        self.allow
+            .iter()
+            .any(|value| value == ANY || value == audience)
+    }
+}
+
+/// Why a route refuses a subject token's audiences: the first of its
+/// checks that failed, in the order they run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudienceRefusal<'a> {
+    /// No audience the token carries is one `allow` admits. Holds the
+    /// first audience the token carries, if it carries any.
+    NotAllowed(Option<&'a str>),
+    /// The token carries this audience, which is outside `allow`.
+    Outside(&'a str),
+    /// The token lacks this audience, which `require` lists.
+    Missing(&'a str),
+    /// The token carries this audience, which `deny` lists.
+    Denied(&'a str),
+}
+
 impl Route {
     /// The longest the gateway waits on this route's downstream between
     /// reads.
@@ -322,16 +366,34 @@ impl Route {
     }
 }
 
-/// The entry in `allowed_audiences` or `allowed_scopes` that accepts any
+/// The entry in `audiences.allow` or `allowed_scopes` that accepts any
 /// value.
 pub const ANY: &str = "*";
 
 impl Route {
-    /// Whether the route accepts a token with these audiences.
-    pub fn accepts_audiences<'a>(&self, mut audiences: impl Iterator<Item = &'a str>) -> bool {
-        let allowed = &self.allowed_audiences;
-        allowed.iter().any(|value| value == ANY)
-            || audiences.any(|aud| allowed.iter().any(|value| value == aud))
+    /// Why the route refuses a token with these audiences, or `None` when
+    /// it accepts them. The token must carry at least one audience `allow`
+    /// admits, none outside it, every one `require` lists and none `deny`
+    /// lists.
+    pub fn audience_refusal<'a>(&'a self, audiences: &[&'a str]) -> Option<AudienceRefusal<'a>> {
+        let policy = &self.audiences;
+        if !audiences.iter().any(|aud| policy.allows(aud)) {
+            return Some(AudienceRefusal::NotAllowed(audiences.first().copied()));
+        }
+        if let Some(outside) = audiences.iter().find(|aud| !policy.allows(aud)) {
+            return Some(AudienceRefusal::Outside(outside));
+        }
+        if let Some(missing) = policy
+            .require
+            .iter()
+            .find(|required| !audiences.contains(&required.as_str()))
+        {
+            return Some(AudienceRefusal::Missing(missing));
+        }
+        audiences
+            .iter()
+            .find(|aud| policy.deny.iter().any(|denied| denied == *aud))
+            .map(|denied| AudienceRefusal::Denied(denied))
     }
 
     /// The first of the route's required scopes that `holds` says is

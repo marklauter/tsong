@@ -87,7 +87,7 @@ name = "orders"
 host = "orders.example.com"
 downstream = "https://orders-lb.example.com"
 append_audience = ""
-allowed_audiences = ["*"]
+audiences = { allow = ["*"] }
 allowed_scopes = []
 "#;
 
@@ -98,7 +98,7 @@ async fn check_reports_warnings_and_passes() -> TestResult {
     assert_eq!(
         tsong::run(args("check", &path)).await?,
         format!(
-            "warning: route \"orders\": allowed_audiences has \"*\"; any value is accepted\n\
+            "warning: route \"orders\": audiences.allow has \"*\"; any audience outside audiences.deny is accepted\n\
              warning: route \"orders\": allowed_scopes is empty; every request will be denied\n\
              {}: ok, signing with ES256 k1",
             path.display()

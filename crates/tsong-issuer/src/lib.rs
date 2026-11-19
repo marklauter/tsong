@@ -2,8 +2,9 @@
 //!
 //! [`Issuer::exchange`] takes a subject token from any trusted issuer and
 //! an audience naming a route's host, and returns a token Tsong signs for
-//! that route. The route filters the subject token: it must carry one of the
-//! route's allowed audiences, and only scopes the route allows. The minted
+//! that route. The route filters the subject token: it must carry at least
+//! one audience the route allows, none outside them, every audience the
+//! route requires and none it denies, and only scopes the route allows. The minted
 //! token keeps the subject token's audiences and scopes, and adds the
 //! route's `append_audience`. Its `sub` is the trusted issuer's
 //! `sub_prefix`, a `:`, and the subject, and its RFC 9493 `sub_id` keeps the
@@ -22,7 +23,9 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tsong_clock::Clock;
-use tsong_config::{Config, RESERVED_CLAIMS, Route, RouteTable, allowed, client_ip};
+use tsong_config::{
+    AudienceRefusal, Config, RESERVED_CLAIMS, Route, RouteTable, allowed, client_ip,
+};
 use tsong_keys::KeySet;
 use tsong_validate::{Validated, Validator, scopes};
 
@@ -165,9 +168,9 @@ impl Issuer {
             ExchangeError::InvalidTarget(format!("no route has host {audience:?}"))
         })?;
         let inbound_audiences = audiences(&validated);
-        if !route.accepts_audiences(inbound_audiences.iter().copied()) {
-            return Err(ExchangeError::InvalidTarget(format!(
-                "the subject token's audience is not allowed for {audience:?}"
+        if let Some(refusal) = route.audience_refusal(&inbound_audiences) {
+            return Err(ExchangeError::InvalidTarget(refused_audience(
+                refusal, audience,
             )));
         }
         let granted = granted_scopes(route, &validated, request.scope.as_deref())?;
@@ -380,6 +383,27 @@ fn audiences(validated: &Validated) -> Vec<&str> {
         Some(Value::String(aud)) => vec![aud.as_str()],
         Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect(),
         _ => Vec::new(),
+    }
+}
+
+/// Why the route for `target` refused the subject token's audiences.
+fn refused_audience(refusal: AudienceRefusal<'_>, target: &str) -> String {
+    match refusal {
+        AudienceRefusal::NotAllowed(Some(aud)) => {
+            format!("the subject token's audience {aud:?} is not allowed for {target:?}")
+        }
+        AudienceRefusal::NotAllowed(None) => {
+            format!("the subject token has no audience, and {target:?} requires one")
+        }
+        AudienceRefusal::Outside(aud) => format!(
+            "the subject token's audience {aud:?} is outside the audiences allowed for {target:?}"
+        ),
+        AudienceRefusal::Missing(aud) => {
+            format!("the subject token lacks audience {aud:?}, which {target:?} requires")
+        }
+        AudienceRefusal::Denied(aud) => {
+            format!("the subject token's audience {aud:?} is denied for {target:?}")
+        }
     }
 }
 

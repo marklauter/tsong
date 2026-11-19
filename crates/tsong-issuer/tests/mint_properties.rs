@@ -1,7 +1,8 @@
 //! What a minted token carries, over generated subject tokens and
 //! requests: its scopes against the `billing` route, which allows
 //! orders.read, orders.write and billing.read and requires orders.read and
-//! billing.read; and its claims against the config's claim mapping. Each
+//! billing.read; its audiences against the `policy` route's audience
+//! policy; and its claims against the config's claim mapping. Each
 //! run tries `PROPTEST_CASES` cases, 256 unless set; the weekly workflow
 //! sets more.
 
@@ -153,6 +154,52 @@ proptest! {
         for (copied, from) in [("email", "email"), ("groups", "groups"), ("user", "uid")] {
             let inbound = extra.get(from).map(|value| json!(format!("in-{value}")));
             prop_assert_eq!(minted.get(copied).cloned(), inbound);
+        }
+    }
+}
+
+/// Audiences a subject token might carry: the trusted issuer accepts
+/// `tsong` and `api`, the `policy` route requires `tsong` and denies
+/// `admin`.
+const AUDIENCES: [&str; 4] = ["tsong", "api", "admin", "other"];
+
+proptest! {
+    #![proptest_config(config())]
+
+    /// The `policy` route, which allows any audience, requires `tsong` and
+    /// denies `admin`, accepts a subject token exactly when it carries
+    /// `tsong` and not `admin`. A token it accepts is minted with the
+    /// subject token's audiences, once each, and the route's
+    /// `append_audience`; one it refuses is `invalid_target`, or a failed
+    /// validation when no audience is one the trusted issuer accepts.
+    #[test]
+    fn a_route_s_audience_policy_decides_the_exchange(
+        held in prop::collection::vec(prop::sample::select(&AUDIENCES[..]), 1..5),
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+        let h = harness().map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let token = request(&h, "policy.test", subject(json!({ "aud": held })))
+            .map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let result = runtime.block_on(h.issuer.exchange(token));
+        let accepted = held.contains(&"tsong") && !held.contains(&"admin");
+        match result {
+            Ok(response) => {
+                prop_assert!(accepted, "accepted {held:?}");
+                let minted = payload(&response.access_token)?;
+                let mut expected: Vec<&str> = Vec::new();
+                for aud in held.iter().copied().chain(["policy.test"]) {
+                    if !expected.contains(&aud) {
+                        expected.push(aud);
+                    }
+                }
+                prop_assert_eq!(minted.get("aud").cloned(), Some(json!(expected)));
+            }
+            Err(error) => {
+                prop_assert!(!accepted, "refused {held:?}: {error}");
+                let validated = held.iter().any(|aud| ["tsong", "api"].contains(aud));
+                let code = if validated { "invalid_target" } else { "invalid_request" };
+                prop_assert_eq!(error.code(), code);
+            }
         }
     }
 }

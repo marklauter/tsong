@@ -8,11 +8,11 @@ created: 2026-11-19
 
 # Token policy
 
-A route decides which subject tokens it accepts and what the minted token carries. Today that decision is spread over a trusted issuer's `audiences`, a route's `allowed_audiences`, `allowed_scopes`, `required_scopes` and `append_audience`, and the global `[claims]` copy and rename lists (`examples/tsong.toml`, `Issuer::exchange` in `crates/tsong-issuer/src/lib.rs`). The token policy gathers the route's part into one block per route, so an authorization modeller reads a route's whole policy in one place.
+A route decides which subject tokens it accepts and what the minted token carries. Today that decision is spread over a trusted issuer's `audiences`, a route's `[routes.audiences]`, `allowed_scopes`, `required_scopes` and `append_audience`, and the global `[claims]` copy and rename lists (`examples/tsong.toml`, `Issuer::exchange` in `crates/tsong-issuer/src/lib.rs`). The token policy gathers the route's part into one block per route, so an authorization modeller reads a route's whole policy in one place.
 
 ## Today
 
-- A route's `allowed_audiences`: the subject token must carry at least one. Other audiences it carries are ignored.
+- A route's `[routes.audiences]`: the subject token must carry at least one audience in `allow` and none outside it, every one in `require` and none in `deny`. This is pull request 1 below.
 - A route's `allowed_scopes`: any scope outside the list refuses the request. A token with no scopes passes.
 - `required_scopes`: every one must be present.
 - The minted token keeps the inbound audiences and scopes unchanged, plus `append_audience`.

@@ -43,7 +43,7 @@ The design applies Saltzer and Schroeder's principles, and the requirements foll
 | Weakness | Countermeasure | Evidence |
 | --- | --- | --- |
 | Broken JWT validation: `alg: none`, RS/HS key confusion, `kid`, `jku` and `x5u` tricks, cross-issuer keys | Per-issuer algorithm allowlists; keys only from the issuer's own JWKS; every claim checked | 43 hand-built attacks refused: `crates/tsong-validate/tests/attacks.rs` |
-| Missing authentication or authorization (CWE-306, CWE-862) | Every request validated and checked against route policy and allow lists, at the gateway and the token endpoint alike | Gateway and issuer tests; scope and claim properties: `crates/tsong-issuer/tests/mint_properties.rs` |
+| Missing authentication or authorization (CWE-306, CWE-862) | Every request validated and checked against route policy and allow lists, at the gateway and the token endpoint alike | Gateway and issuer tests; audience, scope and claim properties: `crates/tsong-issuer/tests/mint_properties.rs` |
 | Client address spoofing | `X-Forwarded-For` believed only from trusted proxies, read from the right | Properties: `crates/tsong-config/tests/properties.rs`; the `forwarded` fuzz target |
 | SSRF through discovery or JWKS URLs (CWE-918) | https only, the JWKS on the issuer's scheme, timeouts on every fetch | `crates/tsong-validate/tests/fetch.rs` |
 | Secrets in config or logs (CWE-798, CWE-532) | Secret references only; a value written in by mistake refused without being quoted; redacted `Debug` | `crates/tsong-config/tests/config.rs`, `crates/tsong-secrets/tests/secrets.rs` |

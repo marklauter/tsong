@@ -80,23 +80,32 @@ oid = "sub"
 
 # Routes
 # One route per host. The request's path and query go to the downstream
-# unchanged. Empty allowed_* lists deny every request; "*" accepts any value.
+# unchanged. An empty audiences.allow or allowed_scopes denies every
+# request; "*" accepts any value.
 [[routes]]
 name = "orders"
 host = "orders.example.com"
 downstream = "https://orders-lb.internal.example.com"
 append_audience = "orders.example.com"      # added to the minted aud; "" adds nothing
-allowed_audiences = ["api://default", "api://tsong"]
 allowed_scopes = ["orders.read", "orders.write"]
 required_scopes = ["orders.read"]          # optional: the token must carry all of these
+
+# The subject token's aud: at least one allowed value and none outside
+# allow. "*" alone allows any audience, and then only deny narrows it.
+[routes.audiences]
+allow = ["api://default", "api://tsong"]
+require = []                                 # optional: the token must carry all of these
+deny = []                                    # optional: the token may carry none of these
 
 [[routes]]
 name = "builds"
 host = "builds.example.com"
 downstream = "https://builds-lb.internal.example.com"
 append_audience = "builds.example.com"
-allowed_audiences = ["tsong"]
 allowed_scopes = ["api", "read_api"]
 allow = ["10.20.0.0/16"]                     # narrows gateway.allow for this route
 read_timeout = "00:05:00"                    # long-running builds
 signing_algorithm = "RS256"                  # ES256 unless set
+
+[routes.audiences]
+allow = ["tsong"]

@@ -6,7 +6,7 @@ use std::fmt;
 
 use url::Url;
 
-use crate::{ANY, Config, KeyProvider, KeyState, Validation};
+use crate::{ANY, AudiencePolicy, Config, KeyProvider, KeyState, Validation};
 
 /// Claims Tsong sets on every token it issues, which claim mapping may not
 /// write.
@@ -235,6 +235,7 @@ impl Config {
             } else if !hosts.insert(route.host.to_ascii_lowercase()) {
                 problems.push(format!("routes repeats host {:?}", route.host));
             }
+            check_audiences(name, &route.audiences, problems);
             let mut required = BTreeSet::new();
             for scope in &route.required_scopes {
                 if !required.insert(scope.as_str()) {
@@ -262,6 +263,57 @@ impl Config {
             if !is_origin(&route.downstream) {
                 problems.push(format!(
                     "route {name:?} downstream must be an https origin, without a path, query or credentials"
+                ));
+            }
+        }
+    }
+}
+
+/// Checks a route's audience policy: every value names an audience, `"*"`
+/// stands alone in `allow` and nowhere else, and every `require` and
+/// `deny` value is one `allow` admits and only one of them lists.
+fn check_audiences(name: &str, policy: &AudiencePolicy, problems: &mut Vec<String>) {
+    for (field, values) in [
+        ("allow", &policy.allow),
+        ("require", &policy.require),
+        ("deny", &policy.deny),
+    ] {
+        if values.iter().any(String::is_empty) {
+            problems.push(format!(
+                "route {name:?} audiences.{field} has an empty value; name each audience"
+            ));
+        }
+    }
+    let any = policy.allow.iter().any(|value| value == ANY);
+    if any && policy.allow.len() > 1 {
+        problems.push(format!(
+            "route {name:?} audiences.allow has \"*\" with other values; \"*\" allows any audience, so it stands alone"
+        ));
+    }
+    for (field, values) in [("require", &policy.require), ("deny", &policy.deny)] {
+        if values.iter().any(|value| value == ANY) {
+            problems.push(format!(
+                "route {name:?} audiences.{field} may not hold \"*\"; name each audience"
+            ));
+        }
+    }
+    let named = |value: &&String| !value.is_empty() && *value != ANY;
+    for audience in policy.require.iter().filter(named) {
+        if policy.deny.contains(audience) {
+            problems.push(format!(
+                "route {name:?} both requires and denies audience {audience:?}"
+            ));
+        } else if !policy.allows(audience) {
+            problems.push(format!(
+                "route {name:?} requires audience {audience:?}, which its audiences.allow doesn't admit"
+            ));
+        }
+    }
+    if !any {
+        for audience in policy.deny.iter().filter(named) {
+            if !policy.allows(audience) && !policy.require.contains(audience) {
+                problems.push(format!(
+                    "route {name:?} denies audience {audience:?}, which its audiences.allow can't admit, so the deny never applies"
                 ));
             }
         }
