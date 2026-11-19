@@ -135,14 +135,7 @@ fn sample_loads() -> TestResult {
     assert_eq!(orders.allowed_scopes, ["orders.read", "orders.write"]);
     assert!(orders.allow.is_none());
     assert_eq!(route(&config, 1)?.allow.as_ref().map(Vec::len), Some(1));
-    // Only the introspected issuer accepts "tsong", and introspection isn't
-    // supported yet.
-    assert_eq!(
-        config.warnings().0,
-        [
-            r#"route "builds": audiences admits no audience a trusted issuer accepts; every token will be refused"#
-        ]
-    );
+    assert_eq!(config.warnings(), Warnings::default());
     Ok(())
 }
 
@@ -1484,10 +1477,24 @@ fn accept_anything_entries_warn_as_decisions() -> TestResult {
 }
 
 #[test]
-fn a_star_audience_narrowed_by_require_or_deny_does_not_warn() -> TestResult {
+fn a_star_audience_with_only_require_warns() -> TestResult {
+    let text = route_with(
+        r#"audiences = { allow = ["api"] }"#,
+        r#"audiences = { allow = ["*"], require = ["api"] }"#,
+    );
+    assert_eq!(
+        Config::from_toml(&text)?.warnings().0,
+        [
+            r#"route "orders": audiences.allow has "*"; any audience is accepted alongside the required ones"#
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_star_audience_narrowed_by_deny_does_not_warn() -> TestResult {
     for policy in [
         r#"{ allow = ["*"], deny = ["admin"] }"#,
-        r#"{ allow = ["*"], require = ["api"] }"#,
         r#"{ allow = ["*"], require = ["api"], deny = ["admin"] }"#,
     ] {
         let text = route_with(
@@ -1594,11 +1601,16 @@ fn a_route_does_not_warn_when_no_trusted_issuer_validates_jwts() -> TestResult {
 }
 
 #[test]
-fn a_route_may_not_deny_its_append_audience() -> TestResult {
-    assert_eq!(
-        audience_problems(r#"{ allow = ["*"], deny = ["orders.example.com"] }"#)?,
-        [r#"route "orders" denies audience "orders.example.com", which its append_audience adds"#]
+fn a_route_may_deny_its_append_audience() -> TestResult {
+    // deny refuses an inbound token already minted for the route;
+    // append_audience adds to the minted one.
+    let text = route_with(
+        r#"audiences = { allow = ["api"] }"#,
+        r#"audiences = { allow = ["*"], deny = ["orders.example.com"] }"#,
     );
+    let config = Config::from_toml(&text)?;
+    assert_eq!(route(&config, 0)?.audiences.deny, ["orders.example.com"]);
+    assert_eq!(config.warnings(), Warnings::default());
     Ok(())
 }
 

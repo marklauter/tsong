@@ -271,8 +271,8 @@ impl Config {
 
 /// Checks a route's audience policy: every value names one audience once,
 /// `"*"` stands alone in `allow` and nowhere else, `deny` is set only
-/// under `"*"`, every `require` value is one `allow` admits and not one
-/// `deny` lists, and `deny` doesn't list the route's `append_audience`.
+/// under `"*"`, and every `require` value is one `allow` admits and not
+/// one `deny` lists.
 fn check_audiences(route: &Route, problems: &mut Vec<String>) {
     let name = &route.name;
     let policy = &route.audiences;
@@ -314,10 +314,6 @@ fn check_audiences(route: &Route, problems: &mut Vec<String>) {
             } else if field == "require" && !policy.allows(value) {
                 problems.push(format!(
                     "route {name:?} requires audience {value:?}, which its audiences.allow doesn't admit"
-                ));
-            } else if field == "deny" && *value == route.append_audience {
-                problems.push(format!(
-                    "route {name:?} denies audience {value:?}, which its append_audience adds"
                 ));
             }
         }

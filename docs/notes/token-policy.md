@@ -65,11 +65,12 @@ The config fails to load, and `tsong check` reports it, when:
 - `"*"` appears in `require` or `deny`, or alongside other values in `allow`.
 - `deny` holds values and `allow` isn't `"*"`. Under a named `allow`, a denied value is one left out of `allow`.
 - A value is in both `require` and `deny`, or `require` names a value `allow` doesn't admit.
-- An audience `deny` lists is the route's `append_audience`, which the route adds to every token it mints.
 - A `map` key is a value `allow` can't admit, or a scope's mapped value is empty or holds whitespace.
 - A rule doesn't parse or type-check as CEL, or its result isn't a boolean.
 
-`tsong check` warns when an audience `allow` is `"*"` with no `require` or `deny`, which accepts any audience, and when the audience policy admits no audience a trusted issuer that validates JWTs accepts, which refuses every token.
+`deny` may list the route's own `append_audience`. `deny` checks the inbound token and `append_audience` the minted one, so the route then refuses a token already minted for it.
+
+`tsong check` warns when an audience `allow` is `"*"` with no `deny`, which accepts any audience, and when the audience policy admits no audience a trusted issuer that validates JWTs accepts, which refuses every token.
 
 `allowed_audiences`, `allowed_scopes` and `required_scopes` are removed, not kept as aliases, and an old config is refused naming the new block. The release notes say how to move a config across.
 

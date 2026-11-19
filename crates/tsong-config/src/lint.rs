@@ -44,24 +44,28 @@ impl Config {
         }
         // Introspected tokens are refused as unsupported, so only issuers
         // that validate JWTs can serve a route.
-        let jwt = || {
-            self.trusted_issuers
-                .values()
-                .filter(|trusted| trusted.validation == Validation::Jwt)
-        };
-        let jwt_issuers = jwt().next().is_some();
-        let jwt_audiences = jwt().flat_map(|trusted| &trusted.audiences);
+        let jwt_audiences: Vec<&str> = self
+            .trusted_issuers
+            .values()
+            .filter(|trusted| trusted.validation == Validation::Jwt)
+            .flat_map(|trusted| trusted.audiences.iter().map(String::as_str))
+            .collect();
         for route in &self.routes {
             let name = &route.name;
             let policy = &route.audiences;
-            // A "*" that `require` or `deny` narrows is a decision already.
-            let narrowed = !policy.require.is_empty() || !policy.deny.is_empty();
+            // `deny` narrowing a "*" is a decision already; `require` isn't,
+            // as it doesn't limit what else a token may carry.
+            let accepted = if policy.require.is_empty() {
+                "any audience is accepted"
+            } else {
+                "any audience is accepted alongside the required ones"
+            };
             for (field, values, star_warns, accepted) in [
                 (
                     "audiences.allow",
                     &policy.allow,
-                    !narrowed,
-                    "any audience is accepted",
+                    policy.deny.is_empty(),
+                    accepted,
                 ),
                 (
                     "allowed_scopes",
@@ -79,10 +83,10 @@ impl Config {
                 }
             }
             if !policy.allow.is_empty()
-                && jwt_issuers
-                && !jwt_audiences
-                    .clone()
-                    .any(|aud| policy.allows(aud) && !policy.deny.contains(aud))
+                && !jwt_audiences.is_empty()
+                && !jwt_audiences.iter().any(|aud| {
+                    policy.allows(aud) && !policy.deny.iter().any(|denied| denied == aud)
+                })
             {
                 warnings.push(format!(
                     "route {name:?}: audiences admits no audience a trusted issuer accepts; every token will be refused"

@@ -22,9 +22,8 @@ use std::time::Duration;
 
 use ipnet::IpNet;
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 use url::Url;
-
-use crate::parse::{AllowedAudiences, Removed};
 
 pub use bootstrap::{
     Admin, Bootstrap, BootstrapError, CONFIG_FILE, GitHost, GitSource, Health, Source, Webhook,
@@ -279,6 +278,7 @@ pub struct Claims {
 
 /// A host mapped to a downstream service. The upstream is the caller; the
 /// downstream is where the request goes.
+// Parsing goes through `RouteDef`, which holds the serde attributes.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(from = "RouteDef")]
 pub struct Route {
@@ -300,18 +300,15 @@ pub struct Route {
     /// The scopes the inbound token must all carry, which a token minted
     /// for the route always keeps. Each must be one `allowed_scopes`
     /// accepts. Empty or unset requires none.
-    #[serde(default)]
     pub required_scopes: Vec<String>,
     /// The algorithm tokens minted for the route are signed with. A key
     /// for it must be active. Unset, ES256.
-    #[serde(default)]
     pub signing_algorithm: SigningAlgorithm,
     /// Client ranges allowed to this route, checked after the gateway's
     /// `allow`. Unset, the gateway's list alone applies. Empty denies
     /// every client.
     pub allow: Option<Vec<IpNet>>,
     /// Overrides `gateway.read_timeout` for this route.
-    #[serde(default, with = "duration::option")]
     pub read_timeout: Option<Duration>,
 }
 
@@ -334,8 +331,12 @@ struct RouteDef {
     #[serde(default, with = "duration::option")]
     read_timeout: Option<Duration>,
     /// Refused, naming `audiences.allow` as its replacement.
-    #[serde(default, rename = "allowed_audiences")]
-    _allowed_audiences: Option<Removed<AllowedAudiences>>,
+    #[serde(
+        default,
+        rename = "allowed_audiences",
+        deserialize_with = "parse::refuse_allowed_audiences"
+    )]
+    _allowed_audiences: Option<IgnoredAny>,
 }
 
 impl From<RouteDef> for Route {

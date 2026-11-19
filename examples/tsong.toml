@@ -108,4 +108,4 @@ read_timeout = "00:05:00"                    # long-running builds
 signing_algorithm = "RS256"                  # ES256 unless set
 
 [routes.audiences]
-allow = ["tsong"]
+allow = ["api://tsong"]
