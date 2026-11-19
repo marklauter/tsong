@@ -56,7 +56,7 @@ deny = ["api://admin"]
 - `allow` is optional, and adds a second IP check to the gateway-wide `gateway.allow`. A client must be in both lists, so a route can only narrow access. A route without `allow` takes `gateway.allow` alone.
 - `read_timeout` is optional, and overrides `gateway.read_timeout`, the longest the gateway waits on a downstream between reads. That defaults to 60 seconds.
 
-An empty `audiences.allow` or `allowed_scopes` denies every request. `"*"` accepts any value. IP lists follow the same rule: an empty `gateway.allow`, or an empty route `allow`, denies every client, and `["0.0.0.0/0", "::/0"]` allows every client. Validation stays mandatory: the config sets values, and no value switches a check off.
+An empty `audiences.allow` or `allowed_scopes` denies every request. `"*"` accepts any value, and in `audiences.allow` only `audiences.deny` narrows it. IP lists follow the same rule: an empty `gateway.allow`, or an empty route `allow`, denies every client, and `["0.0.0.0/0", "::/0"]` allows every client. Validation stays mandatory: the config sets values, and no value switches a check off.
 
 `[[routes]]` deserializes as `Vec<Route>`. `RouteTable` in `crates/tsong-config/src/lib.rs` indexes it as a `HashMap<String, Route>` keyed by lowercased host, and the issuer and the gateway each hold one. The allowed audience and scope lists stay `Vec<String>`: they hold a few entries, and scanning a few entries costs less than hashing. A config reload, roadmap item 7, will build a new table and swap it in.
 
@@ -115,7 +115,7 @@ The gateway fails closed:
 - Errors exit 1. They are everything validation rejects, such as a repeated host or a `downstream` that is not an `https` origin.
 - Warnings print and exit 0, unless `--deny-warnings` is set, which makes them exit 1.
 - An empty `allowed_*` or IP `allow` list warns that every request will be denied, which looks like an omission.
-- A `"*"` entry, or `0.0.0.0/0` or `::/0` in an IP `allow` list, warns that anything is accepted, which needs confirming.
+- A `"*"` entry (in `audiences.allow`, only when `deny` is empty), or `0.0.0.0/0` or `::/0` in an IP `allow` list, warns that anything is accepted, which needs confirming.
 
 Each message names the route and the field, such as `warning: route "builds": allowed_scopes is empty; every request will be denied`.
 

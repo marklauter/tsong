@@ -81,7 +81,7 @@ oid = "sub"
 # Routes
 # One route per host. The request's path and query go to the downstream
 # unchanged. An empty audiences.allow or allowed_scopes denies every
-# request; "*" accepts any value.
+# request; "*" accepts any value, and audiences.deny narrows it.
 [[routes]]
 name = "orders"
 host = "orders.example.com"
