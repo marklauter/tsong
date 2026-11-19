@@ -95,7 +95,7 @@ required_scopes = ["orders.read"]          # optional: the token must carry all 
 [routes.audiences]
 allow = ["api://default", "api://tsong"]
 require = []                                 # optional: the token must carry all of these
-deny = []                                    # optional: the token may carry none of these
+deny = []                                    # optional, only with allow = ["*"]: the token may carry none of these
 
 [[routes]]
 name = "builds"

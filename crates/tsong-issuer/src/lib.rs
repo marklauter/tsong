@@ -389,10 +389,10 @@ fn audiences(validated: &Validated) -> Vec<&str> {
 /// Why the route for `target` refused the subject token's audiences.
 fn refused_audience(refusal: AudienceRefusal<'_>, target: &str) -> String {
     match refusal {
-        AudienceRefusal::NotAllowed(Some(aud)) => {
-            format!("the subject token's audience {aud:?} is not allowed for {target:?}")
+        AudienceRefusal::NotAllowed => {
+            format!("none of the subject token's audiences is allowed for {target:?}")
         }
-        AudienceRefusal::NotAllowed(None) => {
+        AudienceRefusal::NoAudience => {
             format!("the subject token has no audience, and {target:?} requires one")
         }
         AudienceRefusal::Outside(aud) => format!(

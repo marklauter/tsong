@@ -261,9 +261,9 @@ proptest! {
         );
         match refusal {
             None => {}
-            Some(AudienceRefusal::NotAllowed(first)) => {
-                prop_assert!(!one_allowed);
-                prop_assert_eq!(first, held.first().copied());
+            Some(AudienceRefusal::NoAudience) => prop_assert!(held.is_empty()),
+            Some(AudienceRefusal::NotAllowed) => {
+                prop_assert!(!one_allowed && !held.is_empty());
             }
             Some(AudienceRefusal::Outside(aud)) => {
                 prop_assert!(one_allowed);

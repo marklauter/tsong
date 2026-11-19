@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use ipnet::IpNet;
 
-use crate::{ANY, Config, Validation};
+use crate::{ANY, AudiencePolicy, Config, Validation};
 
 /// The longest `jwks_max_age` that doesn't warn.
 const LONGEST_JWKS_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -46,12 +46,12 @@ impl Config {
                 (
                     "audiences.allow",
                     &route.audiences.allow,
-                    "any audience outside audiences.deny is accepted",
+                    star_audiences(&route.audiences),
                 ),
                 (
                     "allowed_scopes",
                     &route.allowed_scopes,
-                    "any value is accepted",
+                    "any value is accepted".to_owned(),
                 ),
             ] {
                 if values.is_empty() {
@@ -68,6 +68,20 @@ impl Config {
         }
         Warnings(warnings)
     }
+}
+
+/// What a route whose `audiences.allow` is `"*"` accepts, given its
+/// `require` and `deny`.
+fn star_audiences(policy: &AudiencePolicy) -> String {
+    let mut accepted = if policy.deny.is_empty() {
+        "any audience is accepted".to_owned()
+    } else {
+        "any audience outside audiences.deny is accepted".to_owned()
+    };
+    if !policy.require.is_empty() {
+        accepted.push_str(" alongside every one in audiences.require");
+    }
+    accepted
 }
 
 /// Warns on an IP allow list that denies every client or allows every

@@ -269,9 +269,10 @@ impl Config {
     }
 }
 
-/// Checks a route's audience policy: every value names an audience, `"*"`
-/// stands alone in `allow` and nowhere else, and every `require` and
-/// `deny` value is one `allow` admits and only one of them lists.
+/// Checks a route's audience policy: every value names one audience once,
+/// `"*"` stands alone in `allow` and nowhere else, `deny` is set only
+/// under `"*"`, and every `require` value is one `allow` admits and not
+/// one `deny` lists.
 fn check_audiences(name: &str, policy: &AudiencePolicy, problems: &mut Vec<String>) {
     for (field, values) in [
         ("allow", &policy.allow),
@@ -283,9 +284,24 @@ fn check_audiences(name: &str, policy: &AudiencePolicy, problems: &mut Vec<Strin
                 "route {name:?} audiences.{field} has an empty value; name each audience"
             ));
         }
+        let mut seen = BTreeSet::new();
+        let mut repeated = BTreeSet::new();
+        for value in values {
+            if !seen.insert(value.as_str()) {
+                if repeated.insert(value.as_str()) {
+                    problems.push(format!(
+                        "route {name:?} audiences.{field} repeats audience {value:?}"
+                    ));
+                }
+            } else if value.contains(char::is_whitespace) {
+                problems.push(format!(
+                    "route {name:?} audiences.{field} has {value:?}; an audience holds no whitespace"
+                ));
+            }
+        }
     }
     let any = policy.allow.iter().any(|value| value == ANY);
-    if any && policy.allow.len() > 1 {
+    if any && policy.allow.iter().any(|value| value != ANY) {
         problems.push(format!(
             "route {name:?} audiences.allow has \"*\" with other values; \"*\" allows any audience, so it stands alone"
         ));
@@ -297,9 +313,22 @@ fn check_audiences(name: &str, policy: &AudiencePolicy, problems: &mut Vec<Strin
             ));
         }
     }
-    let named = |value: &&String| !value.is_empty() && *value != ANY;
+    if !any && !policy.deny.is_empty() {
+        problems.push(format!(
+            "route {name:?} audiences.deny applies only when audiences.allow is \"*\"; remove the denied audiences from allow instead"
+        ));
+    }
+    // Values refused above aren't checked again, and a repeat is checked
+    // once.
+    let named = |value: &&String| {
+        !value.is_empty() && *value != ANY && !value.contains(char::is_whitespace)
+    };
+    let mut checked = BTreeSet::new();
     for audience in policy.require.iter().filter(named) {
-        if policy.deny.contains(audience) {
+        if !checked.insert(audience.as_str()) {
+            continue;
+        }
+        if any && policy.deny.contains(audience) {
             problems.push(format!(
                 "route {name:?} both requires and denies audience {audience:?}"
             ));
@@ -307,15 +336,6 @@ fn check_audiences(name: &str, policy: &AudiencePolicy, problems: &mut Vec<Strin
             problems.push(format!(
                 "route {name:?} requires audience {audience:?}, which its audiences.allow doesn't admit"
             ));
-        }
-    }
-    if !any {
-        for audience in policy.deny.iter().filter(named) {
-            if !policy.allows(audience) && !policy.require.contains(audience) {
-                problems.push(format!(
-                    "route {name:?} denies audience {audience:?}, which its audiences.allow can't admit, so the deny never applies"
-                ));
-            }
         }
     }
 }

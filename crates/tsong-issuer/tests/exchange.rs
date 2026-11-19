@@ -328,12 +328,12 @@ async fn a_route_with_no_allowed_scopes_refuses_every_subject() -> TestResult {
 #[tokio::test]
 async fn the_subject_must_carry_an_audience_the_route_allows() -> TestResult {
     let h = harness()?;
-    let claims = subject(json!({ "aud": "api" }));
+    let claims = subject(json!({ "aud": ["api", "other"] }));
     assert_eq!(
         refused(&h, request(&h, "orders.test", claims)).await?,
         (
             "invalid_target",
-            r#"the subject token's audience "api" is not allowed for "orders.test""#.into()
+            r#"none of the subject token's audiences is allowed for "orders.test""#.into()
         )
     );
     let claims = subject(json!({ "aud": ["tsong"] }));

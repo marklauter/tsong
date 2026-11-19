@@ -314,8 +314,9 @@ pub struct Route {
 }
 
 /// A route's audience policy, checked against the subject token's `aud`
-/// values once the token is validated. Every check runs; the minted token's
-/// audiences are not affected.
+/// values once the token is validated. The token must pass every check; the
+/// first that fails refuses it. The minted token's audiences are not
+/// affected.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AudiencePolicy {
@@ -327,9 +328,9 @@ pub struct AudiencePolicy {
     /// admits. Empty or unset requires none.
     #[serde(default)]
     pub require: Vec<String>,
-    /// The audiences the token may not carry. Each must be one `allow`
-    /// admits, since a deny on any other value would never apply. Empty or
-    /// unset denies none.
+    /// The audiences the token may not carry. Holds values only when
+    /// `allow` is `"*"`; under a named `allow`, leave the audience out of
+    /// `allow` instead. Empty or unset denies none.
     #[serde(default)]
     pub deny: Vec<String>,
 }
@@ -347,9 +348,10 @@ impl AudiencePolicy {
 /// checks that failed, in the order they run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudienceRefusal<'a> {
-    /// No audience the token carries is one `allow` admits. Holds the
-    /// first audience the token carries, if it carries any.
-    NotAllowed(Option<&'a str>),
+    /// The token carries no audience.
+    NoAudience,
+    /// The token carries audiences, but none `allow` admits.
+    NotAllowed,
     /// The token carries this audience, which is outside `allow`.
     Outside(&'a str),
     /// The token lacks this audience, which `require` lists.
@@ -377,8 +379,11 @@ impl Route {
     /// lists.
     pub fn audience_refusal<'a>(&'a self, audiences: &[&'a str]) -> Option<AudienceRefusal<'a>> {
         let policy = &self.audiences;
+        if audiences.is_empty() {
+            return Some(AudienceRefusal::NoAudience);
+        }
         if !audiences.iter().any(|aud| policy.allows(aud)) {
-            return Some(AudienceRefusal::NotAllowed(audiences.first().copied()));
+            return Some(AudienceRefusal::NotAllowed);
         }
         if let Some(outside) = audiences.iter().find(|aud| !policy.allows(aud)) {
             return Some(AudienceRefusal::Outside(outside));
