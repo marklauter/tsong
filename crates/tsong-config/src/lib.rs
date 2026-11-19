@@ -24,6 +24,8 @@ use ipnet::IpNet;
 use serde::Deserialize;
 use url::Url;
 
+use crate::parse::{AllowedAudiences, Removed};
+
 pub use bootstrap::{
     Admin, Bootstrap, BootstrapError, CONFIG_FILE, GitHost, GitSource, Health, Source, Webhook,
 };
@@ -311,6 +313,9 @@ pub struct Route {
     /// Overrides `gateway.read_timeout` for this route.
     #[serde(default, with = "duration::option")]
     pub read_timeout: Option<Duration>,
+    /// Refused, naming `audiences.allow` as its replacement.
+    #[serde(default, rename = "allowed_audiences")]
+    _allowed_audiences: Option<Removed<AllowedAudiences>>,
 }
 
 /// A route's audience policy, checked against the subject token's `aud`

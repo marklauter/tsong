@@ -131,6 +131,19 @@ async fn deny_warnings_fails_a_check_with_warnings() -> TestResult {
         tsong::run(deny(&clean)).await?,
         format!("{}: ok, signing with ES256 k1", clean.display())
     );
+
+    // A "*" that deny narrows is a decision, not a warning.
+    let narrowed = WARNED_ROUTE
+        .replace(
+            r#"audiences = { allow = ["*"] }"#,
+            r#"audiences = { allow = ["*"], deny = ["admin"] }"#,
+        )
+        .replace("allowed_scopes = []", r#"allowed_scopes = ["orders.read"]"#);
+    let narrowed = write_config_with(dir.path(), 0, 0, true, &narrowed)?;
+    assert_eq!(
+        tsong::run(deny(&narrowed)).await?,
+        format!("{}: ok, signing with ES256 k1", narrowed.display())
+    );
     Ok(())
 }
 

@@ -1153,6 +1153,17 @@ fn allowed_audiences_is_refused_naming_its_replacement() -> TestResult {
         "{error}"
     );
     assert!(error.starts_with("line "), "{error}");
+    let line = text
+        .lines()
+        .position(|line| line.starts_with("allowed_audiences"))
+        .ok_or("no allowed_audiences line")?
+        + 1;
+    assert_eq!(
+        error,
+        format!(
+            "line {line}, column 21: allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow"
+        )
+    );
     Ok(())
 }
 
@@ -1218,9 +1229,9 @@ fn an_audience_is_not_both_required_and_denied() -> TestResult {
     assert_eq!(
         audience_problems(r#"{ allow = ["*"], require = ["api", "api"], deny = ["api", "api"] }"#)?,
         [
+            r#"route "orders" both requires and denies audience "api""#,
             r#"route "orders" audiences.require repeats audience "api""#,
             r#"route "orders" audiences.deny repeats audience "api""#,
-            r#"route "orders" both requires and denies audience "api""#,
         ],
         "reported once, however often it repeats"
     );
@@ -1458,32 +1469,49 @@ fn accept_anything_entries_warn_as_decisions() -> TestResult {
 }
 
 #[test]
-fn a_star_audience_warning_names_require_and_deny() -> TestResult {
-    for (policy, accepted) in [
-        (
-            r#"{ allow = ["*"], deny = ["admin"] }"#,
-            "any audience outside audiences.deny is accepted",
-        ),
-        (
-            r#"{ allow = ["*"], require = ["api"] }"#,
-            "any audience is accepted alongside every one in audiences.require",
-        ),
-        (
-            r#"{ allow = ["*"], require = ["api"], deny = ["admin"] }"#,
-            "any audience outside audiences.deny is accepted alongside every one in audiences.require",
-        ),
+fn a_star_audience_narrowed_by_require_or_deny_does_not_warn() -> TestResult {
+    for policy in [
+        r#"{ allow = ["*"], deny = ["admin"] }"#,
+        r#"{ allow = ["*"], require = ["api"] }"#,
+        r#"{ allow = ["*"], require = ["api"], deny = ["admin"] }"#,
     ] {
         let text = route_with(
             r#"audiences = { allow = ["api"] }"#,
             &format!("audiences = {policy}"),
         );
         assert_eq!(
-            Config::from_toml(&text)?.warnings().0,
-            [format!(
-                r#"route "orders": audiences.allow has "*"; {accepted}"#
-            )]
+            Config::from_toml(&text)?.warnings(),
+            Warnings::default(),
+            "{policy}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_route_no_trusted_issuer_can_serve_warns() -> TestResult {
+    let warned = r#"route "orders": audiences.allow holds no audience a trusted issuer accepts; every token will be refused"#;
+    for policy in [r#"{ allow = ["other"] }"#, r#"{ allow = ["a", "b"] }"#] {
+        let text = route_with(
+            r#"audiences = { allow = ["api"] }"#,
+            &format!("audiences = {policy}"),
+        );
+        assert_eq!(Config::from_toml(&text)?.warnings().0, [warned], "{policy}");
+    }
+    let text = route_with(
+        r#"audiences = { allow = ["api"] }"#,
+        r#"audiences = { allow = ["other", "api"] }"#,
+    );
+    assert_eq!(Config::from_toml(&text)?.warnings(), Warnings::default());
+    Ok(())
+}
+
+#[test]
+fn a_route_may_not_deny_its_append_audience() -> TestResult {
+    assert_eq!(
+        audience_problems(r#"{ allow = ["*"], deny = ["orders.example.com"] }"#)?,
+        [r#"route "orders" denies audience "orders.example.com", which its append_audience adds"#]
+    );
     Ok(())
 }
 

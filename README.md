@@ -89,10 +89,8 @@ deploy/podman/run.sh stop     # SIGTERM, then the drain
 Before 1.0, a minor release can change the config or the API; only the latest release gets fixes. Each release's notes on [GitHub Releases](https://github.com/marklauter/tsong/releases) list what changed and how to move an existing config across. To upgrade:
 
 1. Read the release notes for every release you skip.
-2. Run the new binary's `tsong check --deny-warnings` on your config. It refuses a config the new release can't load and names every problem.
+2. Run the new binary's `tsong check --deny-warnings` on your config. It refuses a config the new release can't load, names every problem, and reports warnings. It can't know which tokens your callers send, so check the release notes for changes to what a route accepts.
 3. Fix what it reports, merge the config, then roll out the new image. With a config from Git, a replica that can't load the new config keeps serving the last good one.
-
-A route's `allowed_audiences` is now a `[routes.audiences]` table. Move the list to its `allow`. The table refuses a token that carries any audience outside `allow`, where `allowed_audiences` ignored them, so list every audience the route's callers present, or use `"*"`.
 
 ## Crates
 

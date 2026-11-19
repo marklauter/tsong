@@ -167,7 +167,7 @@ impl Issuer {
         let route = self.routes.get(audience).ok_or_else(|| {
             ExchangeError::InvalidTarget(format!("no route has host {audience:?}"))
         })?;
-        let inbound_audiences = audiences(&validated);
+        let inbound_audiences = audiences(validated.claims())?;
         if let Some(refusal) = route.audience_refusal(&inbound_audiences) {
             return Err(ExchangeError::InvalidTarget(refused_audience(
                 refusal, audience,
@@ -377,12 +377,25 @@ fn check_request(request: &TokenRequest) -> Result<(&str, &str), ExchangeError> 
     Ok((subject_token, audience))
 }
 
-/// The subject token's `aud`: a string or an array of strings.
-fn audiences(validated: &Validated) -> Vec<&str> {
-    match validated.claims().get("aud") {
-        Some(Value::String(aud)) => vec![aud.as_str()],
-        Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect(),
-        _ => Vec::new(),
+/// The subject token's `aud`: a string or an array of strings. Any other
+/// `aud` refuses the exchange, so no audience escapes the route's checks.
+fn audiences(claims: &serde_json::Map<String, Value>) -> Result<Vec<&str>, ExchangeError> {
+    match claims.get("aud") {
+        None => Ok(Vec::new()),
+        Some(Value::String(aud)) => Ok(vec![aud.as_str()]),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str().ok_or_else(|| {
+                    ExchangeError::InvalidRequest(format!(
+                        "the subject token's audience {item} is not a string"
+                    ))
+                })
+            })
+            .collect(),
+        Some(aud) => Err(ExchangeError::InvalidRequest(format!(
+            "the subject token's aud {aud} is not a string or an array of strings"
+        ))),
     }
 }
 
@@ -503,4 +516,56 @@ fn minted_audiences<'a>(inbound: Vec<&'a str>, route: &'a Route) -> Vec<&'a str>
             == minted.len()
     );
     minted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// The error `audiences` reports for a token whose `aud` is `aud`, or
+    /// a test failure when it reports none.
+    fn refused(aud: Value) -> Result<String, Box<dyn std::error::Error>> {
+        let Value::Object(claims) = json!({ "aud": aud }) else {
+            return Err("claims are an object".into());
+        };
+        match audiences(&claims) {
+            Err(error @ ExchangeError::InvalidRequest(_)) => Ok(error.to_string()),
+            other => Err(format!("expected an invalid request, got {other:?}").into()),
+        }
+    }
+
+    // The validator refuses such tokens first; this holds wherever else
+    // the claims come from.
+    #[test]
+    fn an_aud_that_is_not_strings_refuses_the_exchange() -> TestResult {
+        assert_eq!(
+            refused(json!(["api", 1]))?,
+            "the subject token's audience 1 is not a string"
+        );
+        assert_eq!(
+            refused(json!(["api", null]))?,
+            "the subject token's audience null is not a string"
+        );
+        assert_eq!(
+            refused(json!({ "api": true }))?,
+            r#"the subject token's aud {"api":true} is not a string or an array of strings"#
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_aud_is_a_string_an_array_of_strings_or_absent() -> TestResult {
+        let Value::Object(claims) = json!({ "aud": ["api", "other"] }) else {
+            return Err("claims are an object".into());
+        };
+        assert_eq!(audiences(&claims)?, ["api", "other"]);
+        let Value::Object(claims) = json!({ "aud": "api" }) else {
+            return Err("claims are an object".into());
+        };
+        assert_eq!(audiences(&claims)?, ["api"]);
+        assert!(audiences(&serde_json::Map::new())?.is_empty());
+        Ok(())
+    }
 }

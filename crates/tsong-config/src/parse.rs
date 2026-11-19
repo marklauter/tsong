@@ -2,6 +2,10 @@
 //! line, which may hold a secret written in by mistake.
 
 use std::fmt;
+use std::marker::PhantomData;
+
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
 
 /// Why a document didn't parse, and where.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +14,7 @@ pub struct ParseError(String);
 impl ParseError {
     /// The error `toml` reported for `text`, without its quoted source.
     pub(crate) fn new(text: &str, error: &toml::de::Error) -> Self {
-        let message = replaced(error.message()).unwrap_or_else(|| error.message().trim_end());
+        let message = error.message().trim_end();
         let Some(before) = error.span().and_then(|span| text.get(..span.start)) else {
             return Self(message.to_owned());
         };
@@ -32,26 +36,33 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Keys an earlier Tsong took and this one refuses: each key, a field
-/// only the table that held it has, and what took the key's place.
-const REPLACED: [(&str, &str, &str); 1] = [(
-    "allowed_audiences",
-    "append_audience",
-    "allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow",
-)];
+/// A key an earlier Tsong took and this one refuses, saying what took its
+/// place. A table that held the key keeps a field for it, typed
+/// `Option<Removed<K>>`: any value fails to parse with `K::INSTEAD`, at
+/// the value's line and column. To retire another key, add a marker type
+/// and its [`Replaced`] impl.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Removed<K>(PhantomData<K>);
 
-/// What to say instead of `message` when it reports an unknown key that
-/// [`REPLACED`] names, in the table that held it. `toml` lists the fields
-/// the table takes after the unknown one, so the table is known by a field
-/// only it has.
-fn replaced(message: &str) -> Option<&'static str> {
-    REPLACED
-        .iter()
-        .find(|(key, field, _)| {
-            message.starts_with(&format!("unknown field `{key}`"))
-                && message.contains(&format!("`{field}`"))
-        })
-        .map(|(_, _, instead)| *instead)
+/// What took the place of a removed key.
+pub(crate) trait Replaced {
+    /// The message a config that still sets the key fails with.
+    const INSTEAD: &'static str;
+}
+
+impl<'de, K: Replaced> Deserialize<'de> for Removed<K> {
+    fn deserialize<D: Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(D::Error::custom(K::INSTEAD))
+    }
+}
+
+/// A route's `allowed_audiences`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum AllowedAudiences {}
+
+impl Replaced for AllowedAudiences {
+    const INSTEAD: &'static str =
+        "allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow";
 }
 
 /// Parses `text` as `T`, with any error as a [`ParseError`].

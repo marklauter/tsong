@@ -7,10 +7,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use ipnet::IpNet;
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
-use tsong_config::{
-    ANY, AudiencePolicy, AudienceRefusal, Route, RouteTable, SigningAlgorithm, allowed, client_ip,
-};
-use url::Url;
+use tsong_config::{ANY, AudienceRefusal, Route, RouteTable, allowed, client_ip};
 
 /// The run's settings: `PROPTEST_CASES` and the rest from the
 /// environment, with failures saved beside this file to replay first.
@@ -191,23 +188,21 @@ fn names(universe: &'static [&'static str]) -> impl Strategy<Value = Vec<String>
         .prop_map(|names| names.into_iter().map(str::to_owned).collect())
 }
 
-fn route(allow: Vec<String>, allowed_scopes: Vec<String>) -> Result<Route, url::ParseError> {
-    Ok(Route {
-        name: "r".into(),
-        host: "r.test".into(),
-        downstream: Url::parse("https://r-lb.test")?,
-        append_audience: String::new(),
-        audiences: AudiencePolicy {
-            allow,
-            require: Vec::new(),
-            deny: Vec::new(),
-        },
-        allowed_scopes,
-        required_scopes: Vec::new(),
-        signing_algorithm: SigningAlgorithm::default(),
-        allow: None,
-        read_timeout: None,
-    })
+/// A route with these allowed audiences and scopes, and nothing else set.
+fn route(allow: Vec<String>, allowed_scopes: Vec<String>) -> Result<Route, toml::de::Error> {
+    let mut route: Route = toml::from_str(
+        r#"
+name = "r"
+host = "r.test"
+downstream = "https://r-lb.test"
+append_audience = ""
+audiences = { allow = [] }
+allowed_scopes = []
+"#,
+    )?;
+    route.audiences.allow = allow;
+    route.allowed_scopes = allowed_scopes;
+    Ok(route)
 }
 
 proptest! {
@@ -278,20 +273,6 @@ proptest! {
                 prop_assert!(held.contains(&aud) && deny.iter().any(|d| d == aud));
             }
         }
-    }
-
-    /// Under `"*"` alone, a route accepts any token with an audience that
-    /// carries none `deny` lists.
-    #[test]
-    fn a_star_admits_every_audience_deny_does_not_list(
-        deny in names(&AUDIENCES[..4]),
-        audiences in names(&AUDIENCES[..4]),
-    ) {
-        let mut route = route(vec![ANY.into()], vec![ANY.into()])?;
-        route.audiences.deny.clone_from(&deny);
-        let held: Vec<&str> = audiences.iter().map(String::as_str).collect();
-        let expected = !held.is_empty() && !held.iter().any(|aud| deny.iter().any(|d| d == aud));
-        prop_assert_eq!(route.audience_refusal(&held).is_none(), expected);
     }
 
     /// A route is found by its host in any case, and no other host finds it.

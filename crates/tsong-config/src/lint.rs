@@ -1,15 +1,16 @@
 //! Warnings: settings that are valid but look like a mistake. An empty
 //! allow list denies everything, which looks like an omission; an entry
-//! that accepts anything looks like a decision worth confirming. Keys
-//! trusted for more than a day leave a key an issuer has withdrawn in use
-//! for that long.
+//! that accepts anything looks like a decision worth confirming. A route
+//! that allows no audience a trusted issuer accepts refuses every token.
+//! Keys trusted for more than a day leave a key an issuer has withdrawn in
+//! use for that long.
 
 use std::fmt;
 use std::time::Duration;
 
 use ipnet::IpNet;
 
-use crate::{ANY, AudiencePolicy, Config, Validation};
+use crate::{ANY, Config, Validation};
 
 /// The longest `jwks_max_age` that doesn't warn.
 const LONGEST_JWKS_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -42,25 +43,42 @@ impl Config {
         }
         for route in &self.routes {
             let name = &route.name;
-            for (field, values, accepted) in [
+            let policy = &route.audiences;
+            // A "*" that `require` or `deny` narrows is a decision already.
+            let narrowed = !policy.require.is_empty() || !policy.deny.is_empty();
+            for (field, values, star_warns, accepted) in [
                 (
                     "audiences.allow",
-                    &route.audiences.allow,
-                    star_audiences(&route.audiences),
+                    &policy.allow,
+                    !narrowed,
+                    "any audience is accepted",
                 ),
                 (
                     "allowed_scopes",
                     &route.allowed_scopes,
-                    "any value is accepted".to_owned(),
+                    true,
+                    "any value is accepted",
                 ),
             ] {
                 if values.is_empty() {
                     warnings.push(format!(
                         "route {name:?}: {field} is empty; every request will be denied"
                     ));
-                } else if values.iter().any(|value| value == ANY) {
+                } else if star_warns && values.iter().any(|value| value == ANY) {
                     warnings.push(format!("route {name:?}: {field} has \"*\"; {accepted}"));
                 }
+            }
+            if !policy.allow.is_empty()
+                && !policy.allow.iter().any(|value| value == ANY)
+                && !self
+                    .trusted_issuers
+                    .values()
+                    .flat_map(|trusted| &trusted.audiences)
+                    .any(|aud| policy.allow.contains(aud))
+            {
+                warnings.push(format!(
+                    "route {name:?}: audiences.allow holds no audience a trusted issuer accepts; every token will be refused"
+                ));
             }
             if let Some(allow) = &route.allow {
                 ip_list(&mut warnings, &format!("route {name:?}: allow"), allow);
@@ -68,20 +86,6 @@ impl Config {
         }
         Warnings(warnings)
     }
-}
-
-/// What a route whose `audiences.allow` is `"*"` accepts, given its
-/// `require` and `deny`.
-fn star_audiences(policy: &AudiencePolicy) -> String {
-    let mut accepted = if policy.deny.is_empty() {
-        "any audience is accepted".to_owned()
-    } else {
-        "any audience outside audiences.deny is accepted".to_owned()
-    };
-    if !policy.require.is_empty() {
-        accepted.push_str(" alongside every one in audiences.require");
-    }
-    accepted
 }
 
 /// Warns on an IP allow list that denies every client or allows every
