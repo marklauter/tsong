@@ -69,7 +69,7 @@ The config fails to load, and `tsong check` reports it, when:
 - A `map` key is a value `allow` can't admit, or a scope's mapped value is empty or holds whitespace.
 - A rule doesn't parse or type-check as CEL, or its result isn't a boolean.
 
-`tsong check` warns when an audience `allow` is `"*"` with no `require` or `deny`, which accepts any audience, and when a named audience `allow` holds no audience a trusted issuer accepts, which refuses every token.
+`tsong check` warns when an audience `allow` is `"*"` with no `require` or `deny`, which accepts any audience, and when the audience policy admits no audience a trusted issuer that validates JWTs accepts, which refuses every token.
 
 `allowed_audiences`, `allowed_scopes` and `required_scopes` are removed, not kept as aliases, and an old config is refused naming the new block. The release notes say how to move a config across.
 

@@ -1,7 +1,8 @@
 //! Warnings: settings that are valid but look like a mistake. An empty
 //! allow list denies everything, which looks like an omission; an entry
 //! that accepts anything looks like a decision worth confirming. A route
-//! that allows no audience a trusted issuer accepts refuses every token.
+//! whose audience policy admits no audience a trusted issuer accepts
+//! refuses every token.
 //! Keys trusted for more than a day leave a key an issuer has withdrawn in
 //! use for that long.
 
@@ -41,6 +42,15 @@ impl Config {
                 ));
             }
         }
+        // Introspected tokens are refused as unsupported, so only issuers
+        // that validate JWTs can serve a route.
+        let jwt = || {
+            self.trusted_issuers
+                .values()
+                .filter(|trusted| trusted.validation == Validation::Jwt)
+        };
+        let jwt_issuers = jwt().next().is_some();
+        let jwt_audiences = jwt().flat_map(|trusted| &trusted.audiences);
         for route in &self.routes {
             let name = &route.name;
             let policy = &route.audiences;
@@ -69,15 +79,13 @@ impl Config {
                 }
             }
             if !policy.allow.is_empty()
-                && !policy.allow.iter().any(|value| value == ANY)
-                && !self
-                    .trusted_issuers
-                    .values()
-                    .flat_map(|trusted| &trusted.audiences)
-                    .any(|aud| policy.allow.contains(aud))
+                && jwt_issuers
+                && !jwt_audiences
+                    .clone()
+                    .any(|aud| policy.allows(aud) && !policy.deny.contains(aud))
             {
                 warnings.push(format!(
-                    "route {name:?}: audiences.allow holds no audience a trusted issuer accepts; every token will be refused"
+                    "route {name:?}: audiences admits no audience a trusted issuer accepts; every token will be refused"
                 ));
             }
             if let Some(allow) = &route.allow {

@@ -280,7 +280,7 @@ pub struct Claims {
 /// A host mapped to a downstream service. The upstream is the caller; the
 /// downstream is where the request goes.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "RouteDef")]
 pub struct Route {
     pub name: String,
     /// The host requests for this route arrive on, without a port.
@@ -313,9 +313,46 @@ pub struct Route {
     /// Overrides `gateway.read_timeout` for this route.
     #[serde(default, with = "duration::option")]
     pub read_timeout: Option<Duration>,
+}
+
+/// A [`Route`] as written, with the keys an earlier Tsong took, which
+/// refuse to parse.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RouteDef {
+    name: String,
+    host: String,
+    downstream: Url,
+    append_audience: String,
+    audiences: AudiencePolicy,
+    allowed_scopes: Vec<String>,
+    #[serde(default)]
+    required_scopes: Vec<String>,
+    #[serde(default)]
+    signing_algorithm: SigningAlgorithm,
+    allow: Option<Vec<IpNet>>,
+    #[serde(default, with = "duration::option")]
+    read_timeout: Option<Duration>,
     /// Refused, naming `audiences.allow` as its replacement.
     #[serde(default, rename = "allowed_audiences")]
     _allowed_audiences: Option<Removed<AllowedAudiences>>,
+}
+
+impl From<RouteDef> for Route {
+    fn from(def: RouteDef) -> Self {
+        Self {
+            name: def.name,
+            host: def.host,
+            downstream: def.downstream,
+            append_audience: def.append_audience,
+            audiences: def.audiences,
+            allowed_scopes: def.allowed_scopes,
+            required_scopes: def.required_scopes,
+            signing_algorithm: def.signing_algorithm,
+            allow: def.allow,
+            read_timeout: def.read_timeout,
+        }
+    }
 }
 
 /// A route's audience policy, checked against the subject token's `aud`
@@ -387,10 +424,19 @@ impl Route {
         if audiences.is_empty() {
             return Some(AudienceRefusal::NoAudience);
         }
-        if !audiences.iter().any(|aud| policy.allows(aud)) {
+        let mut admitted = false;
+        let mut outside = None;
+        for aud in audiences {
+            if policy.allows(aud) {
+                admitted = true;
+            } else if outside.is_none() {
+                outside = Some(*aud);
+            }
+        }
+        if !admitted {
             return Some(AudienceRefusal::NotAllowed);
         }
-        if let Some(outside) = audiences.iter().find(|aud| !policy.allows(aud)) {
+        if let Some(outside) = outside {
             return Some(AudienceRefusal::Outside(outside));
         }
         if let Some(missing) = policy

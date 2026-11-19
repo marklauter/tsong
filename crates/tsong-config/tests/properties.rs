@@ -7,7 +7,10 @@ use std::net::{IpAddr, Ipv4Addr};
 use ipnet::IpNet;
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
-use tsong_config::{ANY, AudienceRefusal, Route, RouteTable, allowed, client_ip};
+use tsong_config::{
+    ANY, AudiencePolicy, AudienceRefusal, Route, RouteTable, SigningAlgorithm, allowed, client_ip,
+};
+use url::Url;
 
 /// The run's settings: `PROPTEST_CASES` and the rest from the
 /// environment, with failures saved beside this file to replay first.
@@ -189,20 +192,23 @@ fn names(universe: &'static [&'static str]) -> impl Strategy<Value = Vec<String>
 }
 
 /// A route with these allowed audiences and scopes, and nothing else set.
-fn route(allow: Vec<String>, allowed_scopes: Vec<String>) -> Result<Route, toml::de::Error> {
-    let mut route: Route = toml::from_str(
-        r#"
-name = "r"
-host = "r.test"
-downstream = "https://r-lb.test"
-append_audience = ""
-audiences = { allow = [] }
-allowed_scopes = []
-"#,
-    )?;
-    route.audiences.allow = allow;
-    route.allowed_scopes = allowed_scopes;
-    Ok(route)
+fn route(allow: Vec<String>, allowed_scopes: Vec<String>) -> Result<Route, url::ParseError> {
+    Ok(Route {
+        name: "r".into(),
+        host: "r.test".into(),
+        downstream: Url::parse("https://r-lb.test")?,
+        append_audience: String::new(),
+        audiences: AudiencePolicy {
+            allow,
+            require: Vec::new(),
+            deny: Vec::new(),
+        },
+        allowed_scopes,
+        required_scopes: Vec::new(),
+        signing_algorithm: SigningAlgorithm::default(),
+        allow: None,
+        read_timeout: None,
+    })
 }
 
 proptest! {

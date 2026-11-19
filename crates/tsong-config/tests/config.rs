@@ -135,7 +135,14 @@ fn sample_loads() -> TestResult {
     assert_eq!(orders.allowed_scopes, ["orders.read", "orders.write"]);
     assert!(orders.allow.is_none());
     assert_eq!(route(&config, 1)?.allow.as_ref().map(Vec::len), Some(1));
-    assert!(config.warnings().0.is_empty());
+    // Only the introspected issuer accepts "tsong", and introspection isn't
+    // supported yet.
+    assert_eq!(
+        config.warnings().0,
+        [
+            r#"route "builds": audiences admits no audience a trusted issuer accepts; every token will be refused"#
+        ]
+    );
     Ok(())
 }
 
@@ -1148,7 +1155,7 @@ fn allowed_audiences_is_refused_naming_its_replacement() -> TestResult {
     let error = parse_error(&text)?;
     assert!(
         error.ends_with(
-            "allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow"
+            "allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow, which also refuses a token carrying any audience outside it"
         ),
         "{error}"
     );
@@ -1161,9 +1168,17 @@ fn allowed_audiences_is_refused_naming_its_replacement() -> TestResult {
     assert_eq!(
         error,
         format!(
-            "line {line}, column 21: allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow"
+            "line {line}, column 21: allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow, which also refuses a token carrying any audience outside it"
         )
     );
+    Ok(())
+}
+
+#[test]
+fn a_route_shows_no_trace_of_allowed_audiences() -> TestResult {
+    let config = Config::from_toml(&with_route(ROUTE))?;
+    let shown = format!("{:?}", route(&config, 0)?);
+    assert!(!shown.contains("allowed_audiences"), "{shown}");
     Ok(())
 }
 
@@ -1488,21 +1503,93 @@ fn a_star_audience_narrowed_by_require_or_deny_does_not_warn() -> TestResult {
     Ok(())
 }
 
+/// A second trusted issuer, validated by introspection, that accepts
+/// `other`.
+const INTROSPECTED: &str = r#"
+[trusted_issuers.corp]
+sub_prefix = "corp"
+issuer = "https://corp.example.com"
+audiences = ["other"]
+validation = "introspection"
+introspection_url = "https://corp.example.com/introspect"
+client_id = "tsong"
+client_secret = { env = "SECRET" }
+"#;
+
+const UNSERVED: &str = r#"route "orders": audiences admits no audience a trusted issuer accepts; every token will be refused"#;
+
 #[test]
 fn a_route_no_trusted_issuer_can_serve_warns() -> TestResult {
-    let warned = r#"route "orders": audiences.allow holds no audience a trusted issuer accepts; every token will be refused"#;
-    for policy in [r#"{ allow = ["other"] }"#, r#"{ allow = ["a", "b"] }"#] {
+    for policy in [
+        r#"{ allow = ["other"] }"#,
+        r#"{ allow = ["a", "b"] }"#,
+        r#"{ allow = ["*"], deny = ["api"] }"#,
+    ] {
         let text = route_with(
             r#"audiences = { allow = ["api"] }"#,
             &format!("audiences = {policy}"),
         );
-        assert_eq!(Config::from_toml(&text)?.warnings().0, [warned], "{policy}");
+        assert_eq!(
+            Config::from_toml(&text)?.warnings().0,
+            [UNSERVED],
+            "{policy}"
+        );
     }
+    for policy in [
+        r#"{ allow = ["other", "api"] }"#,
+        r#"{ allow = ["*"], deny = ["other"] }"#,
+    ] {
+        let text = route_with(
+            r#"audiences = { allow = ["api"] }"#,
+            &format!("audiences = {policy}"),
+        );
+        assert_eq!(
+            Config::from_toml(&text)?.warnings(),
+            Warnings::default(),
+            "{policy}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_star_route_denying_every_issuer_audience_warns() -> TestResult {
     let text = route_with(
         r#"audiences = { allow = ["api"] }"#,
-        r#"audiences = { allow = ["other", "api"] }"#,
-    );
+        r#"audiences = { allow = ["*"], deny = ["api", "web"] }"#,
+    )
+    .replace(r#"audiences = ["api"]"#, r#"audiences = ["api", "web"]"#);
+    assert_eq!(Config::from_toml(&text)?.warnings().0, [UNSERVED]);
+    let text = text.replace(r#"deny = ["api", "web"]"#, r#"deny = ["api"]"#);
     assert_eq!(Config::from_toml(&text)?.warnings(), Warnings::default());
+    Ok(())
+}
+
+#[test]
+fn audiences_only_an_introspected_issuer_accepts_do_not_serve_a_route() -> TestResult {
+    let route = ROUTE.replace(
+        r#"audiences = { allow = ["api"] }"#,
+        r#"audiences = { allow = ["other"] }"#,
+    );
+    let text = format!("{}{OKTA}{INTROSPECTED}{route}", minimal());
+    assert_eq!(Config::from_toml(&text)?.warnings().0, [UNSERVED]);
+    Ok(())
+}
+
+#[test]
+fn a_route_does_not_warn_when_no_trusted_issuer_validates_jwts() -> TestResult {
+    for issuers in ["", INTROSPECTED] {
+        let route = ROUTE.replace(
+            r#"audiences = { allow = ["api"] }"#,
+            r#"audiences = { allow = ["missing"] }"#,
+        );
+        let text = format!("{}{issuers}{route}", minimal());
+        assert_eq!(
+            Config::from_toml(&text)?.warnings(),
+            Warnings::default(),
+            "{issuers}"
+        );
+    }
     Ok(())
 }
 

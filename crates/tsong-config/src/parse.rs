@@ -37,10 +37,10 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 /// A key an earlier Tsong took and this one refuses, saying what took its
-/// place. A table that held the key keeps a field for it, typed
-/// `Option<Removed<K>>`: any value fails to parse with `K::INSTEAD`, at
-/// the value's line and column. To retire another key, add a marker type
-/// and its [`Replaced`] impl.
+/// place. A table that held the key parses through a private struct that
+/// keeps a field for it, typed `Option<Removed<K>>`: any value fails to
+/// parse with `K::INSTEAD`, at the value's line and column. To retire
+/// another key, add a marker type and its [`Replaced`] impl.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Removed<K>(PhantomData<K>);
 
@@ -61,8 +61,7 @@ impl<'de, K: Replaced> Deserialize<'de> for Removed<K> {
 pub(crate) enum AllowedAudiences {}
 
 impl Replaced for AllowedAudiences {
-    const INSTEAD: &'static str =
-        "allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow";
+    const INSTEAD: &'static str = "allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow, which also refuses a token carrying any audience outside it";
 }
 
 /// Parses `text` as `T`, with any error as a [`ParseError`].
