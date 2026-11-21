@@ -7,7 +7,9 @@ use std::net::{IpAddr, Ipv4Addr};
 use ipnet::IpNet;
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
-use tsong_config::{ANY, Route, RouteTable, SigningAlgorithm, allowed, client_ip};
+use tsong_config::{
+    ANY, AudiencePolicy, AudienceRefusal, Route, RouteTable, SigningAlgorithm, allowed, client_ip,
+};
 use url::Url;
 
 /// The run's settings: `PROPTEST_CASES` and the rest from the
@@ -178,6 +180,10 @@ proptest! {
     }
 }
 
+/// Audiences a route may name or a token carry. Only `allow` holds `"*"`,
+/// and `require` never names `admin`.
+const AUDIENCES: [&str; 5] = ["tsong", "api", "other", "admin", ANY];
+
 const SCOPES: [&str; 5] = ["orders.read", "orders.write", "billing.read", "admin", ANY];
 
 fn names(universe: &'static [&'static str]) -> impl Strategy<Value = Vec<String>> {
@@ -185,16 +191,18 @@ fn names(universe: &'static [&'static str]) -> impl Strategy<Value = Vec<String>
         .prop_map(|names| names.into_iter().map(str::to_owned).collect())
 }
 
-fn route(
-    allowed_audiences: Vec<String>,
-    allowed_scopes: Vec<String>,
-) -> Result<Route, url::ParseError> {
+/// A route with these allowed audiences and scopes, and nothing else set.
+fn route(allow: Vec<String>, allowed_scopes: Vec<String>) -> Result<Route, url::ParseError> {
     Ok(Route {
         name: "r".into(),
         host: "r.test".into(),
         downstream: Url::parse("https://r-lb.test")?,
         append_audience: String::new(),
-        allowed_audiences,
+        audiences: AudiencePolicy {
+            allow,
+            require: Vec::new(),
+            deny: Vec::new(),
+        },
         allowed_scopes,
         required_scopes: Vec::new(),
         signing_algorithm: SigningAlgorithm::default(),
@@ -227,17 +235,50 @@ proptest! {
         }
     }
 
-    /// A route accepts a token's audiences when it allows `*` or any one of
-    /// them.
+    /// A route accepts a token's audiences exactly when it carries at least
+    /// one `allow` admits, none outside `allow`, every one `require` lists
+    /// and none `deny` lists. A refusal names the first check that failed,
+    /// and every check before it passed.
     #[test]
-    fn a_route_accepts_an_audience_it_allows(
-        allowed_audiences in names(&["tsong", "api", "other", ANY]),
-        audiences in names(&["tsong", "api", "other"]),
+    fn a_route_accepts_only_audiences_its_policy_admits(
+        allow in names(&AUDIENCES),
+        require in names(&AUDIENCES[..3]),
+        deny in names(&AUDIENCES[..4]),
+        audiences in names(&AUDIENCES[..4]),
     ) {
-        let route = route(allowed_audiences.clone(), vec![ANY.into()])?;
-        let expected = allowed_audiences.iter().any(|a| a == ANY)
-            || audiences.iter().any(|aud| allowed_audiences.contains(aud));
-        prop_assert_eq!(route.accepts_audiences(audiences.iter().map(String::as_str)), expected);
+        let mut route = route(allow.clone(), vec![ANY.into()])?;
+        route.audiences.require.clone_from(&require);
+        route.audiences.deny.clone_from(&deny);
+        let held: Vec<&str> = audiences.iter().map(String::as_str).collect();
+        let allowed = |aud: &str| allow.iter().any(|a| a == ANY || a == aud);
+        let one_allowed = held.iter().any(|aud| allowed(aud));
+        let none_outside = held.iter().all(|aud| allowed(aud));
+        let all_required = require.iter().all(|r| held.contains(&r.as_str()));
+        let none_denied = !held.iter().any(|aud| deny.iter().any(|d| d == aud));
+        let refusal = route.audience_refusal(&held);
+        prop_assert_eq!(
+            refusal.is_none(),
+            one_allowed && none_outside && all_required && none_denied
+        );
+        match refusal {
+            None => {}
+            Some(AudienceRefusal::NoAudience) => prop_assert!(held.is_empty()),
+            Some(AudienceRefusal::NotAllowed) => {
+                prop_assert!(!one_allowed && !held.is_empty());
+            }
+            Some(AudienceRefusal::Outside(aud)) => {
+                prop_assert!(one_allowed);
+                prop_assert!(held.contains(&aud) && !allowed(aud));
+            }
+            Some(AudienceRefusal::Missing(aud)) => {
+                prop_assert!(one_allowed && none_outside);
+                prop_assert!(require.iter().any(|r| r == aud) && !held.contains(&aud));
+            }
+            Some(AudienceRefusal::Denied(aud)) => {
+                prop_assert!(one_allowed && none_outside && all_required);
+                prop_assert!(held.contains(&aud) && deny.iter().any(|d| d == aud));
+            }
+        }
     }
 
     /// A route is found by its host in any case, and no other host finds it.

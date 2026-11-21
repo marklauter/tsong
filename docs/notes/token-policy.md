@@ -8,11 +8,11 @@ created: 2026-11-19
 
 # Token policy
 
-A route decides which subject tokens it accepts and what the minted token carries. Today that decision is spread over a trusted issuer's `audiences`, a route's `allowed_audiences`, `allowed_scopes`, `required_scopes` and `append_audience`, and the global `[claims]` copy and rename lists (`examples/tsong.toml`, `Issuer::exchange` in `crates/tsong-issuer/src/lib.rs`). The token policy gathers the route's part into one block per route, so an authorization modeller reads a route's whole policy in one place.
+A route decides which subject tokens it accepts and what the minted token carries. Today that decision is spread over a trusted issuer's `audiences`, a route's `[routes.audiences]`, `allowed_scopes`, `required_scopes` and `append_audience`, and the global `[claims]` copy and rename lists (`examples/tsong.toml`, `Issuer::exchange` in `crates/tsong-issuer/src/lib.rs`). The token policy gathers the route's part into one block per route, so an authorization modeller reads a route's whole policy in one place.
 
 ## Today
 
-- A route's `allowed_audiences`: the subject token must carry at least one. Other audiences it carries are ignored.
+- A route's `[routes.audiences]`: the subject token must carry at least one audience in `allow` and none outside it, every one in `require` and none in `deny`. This is pull request 1 below.
 - A route's `allowed_scopes`: any scope outside the list refuses the request. A token with no scopes passes.
 - `required_scopes`: every one must be present.
 - The minted token keeps the inbound audiences and scopes unchanged, plus `append_audience`.
@@ -20,7 +20,7 @@ A route decides which subject tokens it accepts and what the minted token carrie
 
 ## The policy
 
-One rule for every allow list: the token must carry at least one allowed value, and nothing outside the list. `"*"` allows any value, and then only the deny list narrows it.
+One rule for every allow list: the token must carry at least one allowed value, and nothing outside the list. `"*"` allows any value, and then only the deny list narrows it. A deny list may hold values only under `"*"`; under a named allow list, a value is denied by leaving it out.
 
 ```toml
 [[routes]]
@@ -32,7 +32,6 @@ append_audience = "orders.example.com"
 [routes.audiences]
 allow = ["api://default", "api://tsong"]
 require = []
-deny = []
 map = { "api://default" = "orders" }
 
 [routes.scopes]
@@ -62,13 +61,18 @@ Every check runs on inbound values. `map` changes only what the minted token car
 The config fails to load, and `tsong check` reports it, when:
 
 - `allow` is missing. An empty `allow` denies every request, as empty lists do today.
+- A value is empty, holds whitespace, or repeats within its list.
 - `"*"` appears in `require` or `deny`, or alongside other values in `allow`.
+- `deny` holds values and `allow` isn't `"*"`. Under a named `allow`, a denied value is one left out of `allow`.
 - A value is in both `require` and `deny`, or `require` names a value `allow` doesn't admit.
-- A `deny` value is one `allow` can't admit anyway, unless `allow` is `"*"`. Such a value never applies.
 - A `map` key is a value `allow` can't admit, or a scope's mapped value is empty or holds whitespace.
 - A rule doesn't parse or type-check as CEL, or its result isn't a boolean.
 
-`allowed_audiences`, `allowed_scopes` and `required_scopes` are removed, not kept as aliases, and an old config is refused naming the new block. The release notes and the README's upgrading steps say how to move a config across.
+`deny` may list the route's own `append_audience`. `deny` checks the inbound token and `append_audience` the minted one, so the route then refuses a token already minted for it.
+
+`tsong check` warns when an audience `allow` is `"*"` with no `deny`, which accepts any audience, and when the audience policy admits no audience a trusted issuer that validates JWTs accepts, which refuses every token.
+
+`allowed_audiences`, `allowed_scopes` and `required_scopes` are removed, not kept as aliases, and an old config is refused naming the new block. The release notes say how to move a config across.
 
 ### Rules
 

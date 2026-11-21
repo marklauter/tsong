@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use ipnet::IpNet;
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 use url::Url;
 
 pub use bootstrap::{
@@ -277,8 +278,9 @@ pub struct Claims {
 
 /// A host mapped to a downstream service. The upstream is the caller; the
 /// downstream is where the request goes.
+// Parsing goes through `RouteDef`, which holds the serde attributes.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "RouteDef")]
 pub struct Route {
     pub name: String,
     /// The host requests for this route arrive on, without a port.
@@ -290,28 +292,115 @@ pub struct Route {
     /// Added to the `aud` of tokens minted for this route. Empty adds
     /// nothing.
     pub append_audience: String,
-    /// The inbound `aud` values the route accepts: the inbound token must
-    /// carry one. Empty denies every token; `"*"` accepts any.
-    pub allowed_audiences: Vec<String>,
+    /// Which inbound `aud` values the route accepts, requires and denies.
+    pub audiences: AudiencePolicy,
     /// The inbound scopes the route accepts: every scope the inbound token
     /// carries must be one. Empty denies every token; `"*"` accepts any.
     pub allowed_scopes: Vec<String>,
     /// The scopes the inbound token must all carry, which a token minted
     /// for the route always keeps. Each must be one `allowed_scopes`
     /// accepts. Empty or unset requires none.
-    #[serde(default)]
     pub required_scopes: Vec<String>,
     /// The algorithm tokens minted for the route are signed with. A key
     /// for it must be active. Unset, ES256.
-    #[serde(default)]
     pub signing_algorithm: SigningAlgorithm,
     /// Client ranges allowed to this route, checked after the gateway's
     /// `allow`. Unset, the gateway's list alone applies. Empty denies
     /// every client.
     pub allow: Option<Vec<IpNet>>,
     /// Overrides `gateway.read_timeout` for this route.
-    #[serde(default, with = "duration::option")]
     pub read_timeout: Option<Duration>,
+}
+
+/// A [`Route`] as written, with the keys an earlier Tsong took, which
+/// refuse to parse.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RouteDef {
+    name: String,
+    host: String,
+    downstream: Url,
+    append_audience: String,
+    audiences: AudiencePolicy,
+    allowed_scopes: Vec<String>,
+    #[serde(default)]
+    required_scopes: Vec<String>,
+    #[serde(default)]
+    signing_algorithm: SigningAlgorithm,
+    allow: Option<Vec<IpNet>>,
+    #[serde(default, with = "duration::option")]
+    read_timeout: Option<Duration>,
+    /// Refused, naming `audiences.allow` as its replacement.
+    #[serde(
+        default,
+        rename = "allowed_audiences",
+        deserialize_with = "parse::refuse_allowed_audiences"
+    )]
+    _allowed_audiences: Option<IgnoredAny>,
+}
+
+impl From<RouteDef> for Route {
+    fn from(def: RouteDef) -> Self {
+        Self {
+            name: def.name,
+            host: def.host,
+            downstream: def.downstream,
+            append_audience: def.append_audience,
+            audiences: def.audiences,
+            allowed_scopes: def.allowed_scopes,
+            required_scopes: def.required_scopes,
+            signing_algorithm: def.signing_algorithm,
+            allow: def.allow,
+            read_timeout: def.read_timeout,
+        }
+    }
+}
+
+/// A route's audience policy, checked against the subject token's `aud`
+/// values once the token is validated. The token must pass every check; the
+/// first that fails refuses it. The minted token's audiences are not
+/// affected.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudiencePolicy {
+    /// The audiences the token may carry: at least one of them, and none
+    /// outside them. Empty denies every token; `"*"`, alone, allows any
+    /// audience, and then only `deny` narrows it.
+    pub allow: Vec<String>,
+    /// The audiences the token must all carry. Each must be one `allow`
+    /// admits. Empty or unset requires none.
+    #[serde(default)]
+    pub require: Vec<String>,
+    /// The audiences the token may not carry. Holds values only when
+    /// `allow` is `"*"`; under a named `allow`, leave the audience out of
+    /// `allow` instead. Empty or unset denies none.
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+impl AudiencePolicy {
+    /// Whether `allow` admits `audience`.
+    pub fn allows(&self, audience: &str) -> bool {
+        self.allow
+            .iter()
+            .any(|value| value == ANY || value == audience)
+    }
+}
+
+/// Why a route refuses a subject token's audiences: the first of its
+/// checks that failed, in the order they run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudienceRefusal<'a> {
+    /// The token carries no audience.
+    NoAudience,
+    /// The token carries audiences, but none `allow` admits.
+    NotAllowed,
+    /// The token carries this audience, which is outside `allow`.
+    Outside(&'a str),
+    /// The token lacks this audience, which `require` lists.
+    Missing(&'a str),
+    /// The token carries this audience, which `deny` lists.
+    Denied(&'a str),
 }
 
 impl Route {
@@ -322,16 +411,46 @@ impl Route {
     }
 }
 
-/// The entry in `allowed_audiences` or `allowed_scopes` that accepts any
+/// The entry in `audiences.allow` or `allowed_scopes` that accepts any
 /// value.
 pub const ANY: &str = "*";
 
 impl Route {
-    /// Whether the route accepts a token with these audiences.
-    pub fn accepts_audiences<'a>(&self, mut audiences: impl Iterator<Item = &'a str>) -> bool {
-        let allowed = &self.allowed_audiences;
-        allowed.iter().any(|value| value == ANY)
-            || audiences.any(|aud| allowed.iter().any(|value| value == aud))
+    /// Why the route refuses a token with these audiences, or `None` when
+    /// it accepts them. The token must carry at least one audience `allow`
+    /// admits, none outside it, every one `require` lists and none `deny`
+    /// lists.
+    pub fn audience_refusal<'a>(&'a self, audiences: &[&'a str]) -> Option<AudienceRefusal<'a>> {
+        let policy = &self.audiences;
+        if audiences.is_empty() {
+            return Some(AudienceRefusal::NoAudience);
+        }
+        let mut admitted = false;
+        let mut outside = None;
+        for aud in audiences {
+            if policy.allows(aud) {
+                admitted = true;
+            } else if outside.is_none() {
+                outside = Some(*aud);
+            }
+        }
+        if !admitted {
+            return Some(AudienceRefusal::NotAllowed);
+        }
+        if let Some(outside) = outside {
+            return Some(AudienceRefusal::Outside(outside));
+        }
+        if let Some(missing) = policy
+            .require
+            .iter()
+            .find(|required| !audiences.contains(&required.as_str()))
+        {
+            return Some(AudienceRefusal::Missing(missing));
+        }
+        audiences
+            .iter()
+            .find(|aud| policy.deny.iter().any(|denied| denied == *aud))
+            .map(|denied| AudienceRefusal::Denied(denied))
     }
 
     /// The first of the route's required scopes that `holds` says is

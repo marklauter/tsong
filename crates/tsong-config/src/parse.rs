@@ -3,6 +3,9 @@
 
 use std::fmt;
 
+use serde::Deserializer;
+use serde::de::{Error as _, IgnoredAny};
+
 /// Why a document didn't parse, and where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError(String);
@@ -31,6 +34,16 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+/// Refuses a route's `allowed_audiences`, at its value's line and column,
+/// naming what took its place.
+pub(crate) fn refuse_allowed_audiences<'de, D: Deserializer<'de>>(
+    _: D,
+) -> Result<Option<IgnoredAny>, D::Error> {
+    Err(D::Error::custom(
+        "allowed_audiences is replaced by [routes.audiences]; move its values to audiences.allow, which also refuses a token carrying any audience outside it",
+    ))
+}
 
 /// Parses `text` as `T`, with any error as a [`ParseError`].
 pub(crate) fn from_str<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, ParseError> {

@@ -65,7 +65,7 @@ name = "orders"
 host = "orders.test"
 downstream = "https://orders-lb.test"
 append_audience = "orders.test"
-allowed_audiences = ["tsong"]
+audiences = { allow = ["tsong", "orders.test"] }
 allowed_scopes = ["orders.read", "orders.write"]
 
 [[routes]]
@@ -73,7 +73,7 @@ name = "open"
 host = "open.test"
 downstream = "https://open-lb.test"
 append_audience = ""
-allowed_audiences = ["*"]
+audiences = { allow = ["*"] }
 allowed_scopes = ["*"]
 allow = ["10.1.0.0/16"]
 
@@ -82,16 +82,24 @@ name = "billing"
 host = "billing.test"
 downstream = "https://billing-lb.test"
 append_audience = ""
-allowed_audiences = ["tsong"]
+audiences = { allow = ["tsong"] }
 allowed_scopes = ["orders.read", "orders.write", "billing.read"]
 required_scopes = ["orders.read", "billing.read"]
+
+[[routes]]
+name = "policy"
+host = "policy.test"
+downstream = "https://policy-lb.test"
+append_audience = "policy.test"
+audiences = { allow = ["*"], require = ["tsong"], deny = ["admin"] }
+allowed_scopes = ["*"]
 
 [[routes]]
 name = "closed"
 host = "closed.test"
 downstream = "https://closed-lb.test"
 append_audience = "closed.test"
-allowed_audiences = ["tsong"]
+audiences = { allow = ["tsong"] }
 allowed_scopes = []
 "#;
 

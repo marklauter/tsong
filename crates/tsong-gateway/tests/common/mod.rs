@@ -60,7 +60,7 @@ name = "orders"
 host = "orders.test"
 downstream = "https://orders-lb.test"
 append_audience = "orders.test"
-allowed_audiences = ["tsong"]
+audiences = { allow = ["tsong"] }
 allowed_scopes = ["orders.read"]
 
 [[routes]]
@@ -68,7 +68,7 @@ name = "builds"
 host = "builds.test"
 downstream = "https://builds-lb.test"
 append_audience = "builds.test"
-allowed_audiences = ["tsong"]
+audiences = { allow = ["tsong"] }
 allowed_scopes = ["*"]
 allow = ["10.1.0.0/16"]
 "#;

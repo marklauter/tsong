@@ -328,19 +328,66 @@ async fn a_route_with_no_allowed_scopes_refuses_every_subject() -> TestResult {
 #[tokio::test]
 async fn the_subject_must_carry_an_audience_the_route_allows() -> TestResult {
     let h = harness()?;
-    let claims = subject(json!({ "aud": "api" }));
+    let claims = subject(json!({ "aud": ["api", "other"] }));
     assert_eq!(
         refused(&h, request(&h, "orders.test", claims)).await?,
         (
             "invalid_target",
-            r#"the subject token's audience is not allowed for "orders.test""#.into()
+            r#"none of the subject token's audiences is allowed for "orders.test""#.into()
         )
     );
-    let claims = subject(json!({ "aud": ["api", "tsong"] }));
+    let claims = subject(json!({ "aud": ["tsong"] }));
     let (_, claims) = exchanged(&h, request(&h, "orders.test", claims)).await?;
+    assert_eq!(claims.get("aud"), Some(&json!(["tsong", "orders.test"])));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_subject_may_carry_no_audience_outside_the_allowed_ones() -> TestResult {
+    let h = harness()?;
+    let claims = subject(json!({ "aud": ["tsong", "api"] }));
+    assert_eq!(
+        refused(&h, request(&h, "orders.test", claims)).await?,
+        (
+            "invalid_target",
+            r#"the subject token's audience "api" is outside the audiences allowed for "orders.test""#
+                .into()
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_subject_must_carry_every_required_audience() -> TestResult {
+    let h = harness()?;
+    let claims = subject(json!({ "aud": ["api", "other"] }));
+    assert_eq!(
+        refused(&h, request(&h, "policy.test", claims)).await?,
+        (
+            "invalid_target",
+            r#"the subject token lacks audience "tsong", which "policy.test" requires"#.into()
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_subject_may_carry_no_denied_audience() -> TestResult {
+    let h = harness()?;
+    let claims = subject(json!({ "aud": ["tsong", "admin"] }));
+    assert_eq!(
+        refused(&h, request(&h, "policy.test", claims)).await?,
+        (
+            "invalid_target",
+            r#"the subject token's audience "admin" is denied for "policy.test""#.into()
+        )
+    );
+    let claims = subject(json!({ "aud": ["api", "tsong", "other"] }));
+    let (_, claims) = exchanged(&h, request(&h, "policy.test", claims)).await?;
     assert_eq!(
         claims.get("aud"),
-        Some(&json!(["api", "tsong", "orders.test"]))
+        Some(&json!(["api", "tsong", "other", "policy.test"])),
+        "the minted token keeps the inbound audiences"
     );
     Ok(())
 }
@@ -657,7 +704,7 @@ name = "ledger"
 host = "ledger.test"
 downstream = "https://ledger-lb.test"
 append_audience = "ledger.test"
-allowed_audiences = ["tsong"]
+audiences = { allow = ["tsong"] }
 allowed_scopes = ["*"]
 signing_algorithm = "RS256"
 

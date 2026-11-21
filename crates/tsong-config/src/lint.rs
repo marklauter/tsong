@@ -1,8 +1,10 @@
 //! Warnings: settings that are valid but look like a mistake. An empty
 //! allow list denies everything, which looks like an omission; an entry
-//! that accepts anything looks like a decision worth confirming. Keys
-//! trusted for more than a day leave a key an issuer has withdrawn in use
-//! for that long.
+//! that accepts anything looks like a decision worth confirming. A route
+//! whose audience policy admits no audience a trusted issuer accepts
+//! refuses every token.
+//! Keys trusted for more than a day leave a key an issuer has withdrawn in
+//! use for that long.
 
 use std::fmt;
 use std::time::Duration;
@@ -40,21 +42,55 @@ impl Config {
                 ));
             }
         }
+        // Introspected tokens are refused as unsupported, so only issuers
+        // that validate JWTs can serve a route.
+        let jwt_audiences: Vec<&str> = self
+            .trusted_issuers
+            .values()
+            .filter(|trusted| trusted.validation == Validation::Jwt)
+            .flat_map(|trusted| trusted.audiences.iter().map(String::as_str))
+            .collect();
         for route in &self.routes {
             let name = &route.name;
-            for (field, values) in [
-                ("allowed_audiences", &route.allowed_audiences),
-                ("allowed_scopes", &route.allowed_scopes),
+            let policy = &route.audiences;
+            // `deny` narrowing a "*" is a decision already; `require` isn't,
+            // as it doesn't limit what else a token may carry.
+            let accepted = if policy.require.is_empty() {
+                "any audience is accepted"
+            } else {
+                "any audience is accepted alongside the required ones"
+            };
+            for (field, values, star_warns, accepted) in [
+                (
+                    "audiences.allow",
+                    &policy.allow,
+                    policy.deny.is_empty(),
+                    accepted,
+                ),
+                (
+                    "allowed_scopes",
+                    &route.allowed_scopes,
+                    true,
+                    "any value is accepted",
+                ),
             ] {
                 if values.is_empty() {
                     warnings.push(format!(
                         "route {name:?}: {field} is empty; every request will be denied"
                     ));
-                } else if values.iter().any(|value| value == ANY) {
-                    warnings.push(format!(
-                        "route {name:?}: {field} has \"*\"; any value is accepted"
-                    ));
+                } else if star_warns && values.iter().any(|value| value == ANY) {
+                    warnings.push(format!("route {name:?}: {field} has \"*\"; {accepted}"));
                 }
+            }
+            if !policy.allow.is_empty()
+                && !jwt_audiences.is_empty()
+                && !jwt_audiences.iter().any(|aud| {
+                    policy.allows(aud) && !policy.deny.iter().any(|denied| denied == aud)
+                })
+            {
+                warnings.push(format!(
+                    "route {name:?}: audiences admits no audience a trusted issuer accepts; every token will be refused"
+                ));
             }
             if let Some(allow) = &route.allow {
                 ip_list(&mut warnings, &format!("route {name:?}: allow"), allow);
