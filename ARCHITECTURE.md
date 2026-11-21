@@ -4,21 +4,20 @@ Tsong is one Linux binary that runs an API gateway and an RFC 8693 token exchang
 
 ## Process and listeners
 
-`tsong serve` reads a bootstrap file, deployed with Tsong, that says where the config comes from. It then serves up to five listeners, each a plain-HTTP socket behind a TLS-terminating load balancer:
+`tsong serve` reads a bootstrap file, deployed with Tsong, that says where the config comes from. It then serves up to four listeners, each a plain-HTTP socket behind a TLS-terminating load balancer:
 
 - The gateway, for callers' requests to the routes' downstream services.
 - The issuer: the token endpoint, the JWKS and the OIDC discovery document.
 - The admin listener, optional: the config's status and Prometheus metrics.
-- The webhook listener, optional: a Git host's signed push notifications.
 - The health listener, optional: liveness and readiness for the load balancer.
 
-The gateway and the issuer read their address and policy from the config. The admin, webhook and health listeners read theirs from the bootstrap file, each with its own allow list, so a config from Git can't open or move them.
+The gateway and the issuer read their address and policy from the config. The admin and health listeners read theirs from the bootstrap file, each with its own allow list, so the config can't open or move them.
 
 ## State and reloads
 
 Tsong builds one immutable `State` from each config. It holds the signing keys, the trusted issuers' key caches, the route table, the exchange cache and the HTTP clients. The listeners serve from whichever `State` is current when a request arrives, and a request keeps that state until it finishes.
 
-A reload, on a webhook delivery or a poll, fetches the config, validates it, and builds a whole new `State` before swapping it in. A config that fails to parse, validate or build never replaces the one being served. Nothing carries over between states. [docs/notes/config-from-git.md](docs/notes/config-from-git.md) describes the store and the reloader.
+The config is a file, read once at start, and a config that fails to parse, validate or build stops Tsong from starting. The reloader can fetch a config, validate it, and build a whole new `State` before swapping it in, so a config that fails never replaces the one being served, and nothing carries over between states. Nothing triggers a reload until roadmap item 32 adds a poll. [docs/notes/config-source.md](docs/notes/config-source.md) describes the store and the reloader.
 
 ## How a request is handled
 
@@ -32,7 +31,6 @@ Each crate has one job, and dependencies point one way, from the command down to
 - `tsong-gateway` depends on `tsong-issuer` for the exchange.
 - `tsong-issuer` depends on `tsong-validate` for inbound tokens and `tsong-keys` for signing.
 - `tsong-keys` depends on `tsong-secrets` to read private keys.
-- `tsong-git` implements the Git config store.
 - Every crate depends on `tsong-config`, the model and its validation, and none depends on `tsong`.
 
 ## Design decisions

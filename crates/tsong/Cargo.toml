@@ -18,7 +18,6 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sig
 tsong-clock.workspace = true
 tsong-config.workspace = true
 tsong-gateway.workspace = true
-tsong-git.workspace = true
 tsong-issuer.workspace = true
 tsong-keys.workspace = true
 tsong-secrets.workspace = true
@@ -26,10 +25,7 @@ tsong-validate.workspace = true
 tower = { workspace = true, features = ["util"] }
 
 [dev-dependencies]
-getrandom.workspace = true
-hmac.workspace = true
 http-body-util.workspace = true
-sha2.workspace = true
 tsong-clock = { workspace = true, features = ["test-util"] }
 tsong-validate = { workspace = true, features = ["test-util"] }
 reqwest.workspace = true

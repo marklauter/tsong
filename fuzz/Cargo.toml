@@ -19,7 +19,6 @@ serde_urlencoded = "0.7.1"
 tokio = { version = "1.54.1", features = ["rt"] }
 tsong-clock = { path = "../crates/tsong-clock", features = ["test-util"] }
 tsong-config = { path = "../crates/tsong-config" }
-tsong-git = { path = "../crates/tsong-git" }
 tsong-issuer = { path = "../crates/tsong-issuer" }
 tsong-validate = { path = "../crates/tsong-validate", features = ["test-util"] }
 
@@ -47,13 +46,6 @@ bench = false
 [[bin]]
 name = "token_form"
 path = "fuzz_targets/token_form.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "webhook"
-path = "fuzz_targets/webhook.rs"
 test = false
 doc = false
 bench = false

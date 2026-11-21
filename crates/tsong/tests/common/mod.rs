@@ -6,10 +6,8 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
 use tsong::reload::Audit;
-use tsong_config::{ConfigError, ConfigStore, Fetched, LoadFuture, Snapshot, hex};
+use tsong_config::{ConfigError, ConfigStore, Fetched, LoadFuture, Snapshot};
 use tsong_validate::testkit::pem;
 
 pub type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -27,13 +25,6 @@ pub fn write_key(dir: &Path) -> TestResult<PathBuf> {
 pub fn free_port() -> TestResult<u16> {
     let free = std::net::TcpListener::bind("127.0.0.1:0")?;
     Ok(free.local_addr()?.port())
-}
-
-/// GitHub's `X-Hub-Signature-256` for `body` under `secret`.
-pub fn github_signature(secret: &str, body: &str) -> TestResult<String> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())?;
-    mac.update(body.as_bytes());
-    Ok(format!("sha256={}", hex(&mac.finalize().into_bytes())))
 }
 
 /// A route on `host` allowing `scopes`.

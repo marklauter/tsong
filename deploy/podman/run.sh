@@ -8,11 +8,10 @@
 #   deploy/podman/run.sh logs     follow its output, the audit lines included
 #   deploy/podman/run.sh check    run `tsong check` on the config in the image
 #
-# The container runs with a read-only root filesystem. The bootstrap file,
-# the config and the signing key are mounted read-only; the volume
-# tsong-state is mounted at /var/lib/tsong for a Git source's clone. The
-# ports are published on 127.0.0.1 only, because the stub's allow lists
-# are open.
+# The container runs with a read-only root filesystem and no volume. The
+# bootstrap file, the config and the signing key are mounted read-only. The
+# ports are published on 127.0.0.1 only, because the stub's allow lists are
+# open.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -57,7 +56,6 @@ case "${1:-}" in
     MSYS_NO_PATHCONV=1 podman run -d --name "$name" --replace \
       "${userns[@]}" --read-only --tmpfs /tmp \
       "${mounts[@]}" \
-      -v tsong-state:/var/lib/tsong \
       --stop-timeout "$stop_timeout" \
       -p 127.0.0.1:8443:8443 -p 127.0.0.1:8444:8444 \
       -p 127.0.0.1:8445:8445 -p 127.0.0.1:8447:8447 \
@@ -77,7 +75,7 @@ case "${1:-}" in
       check /etc/tsong/tsong.toml
     ;;
   *)
-    sed -n '2,15p' "$0" >&2
+    sed -n '2,/^set /{/^#/p;}' "$0" >&2
     exit 2
     ;;
 esac

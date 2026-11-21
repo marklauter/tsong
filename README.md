@@ -3,7 +3,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16914/badge)](https://www.bestpractices.dev/projects/16914)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dzong-labs/tsong/badge)](https://scorecard.dev/viewer/?uri=github.com/dzong-labs/tsong)
 
-Tsong is an API gateway and RFC 8693 token exchange issuer that centralizes access-token validation. It validates every caller's token against the identity providers you trust, such as Entra, Okta or GitLab, enforcing each route's audience, scope and IP policy from a single config file, and replaces the token with one Tsong signs and scopes to that route. Services then trust one issuer and one JWKS instead of many, and never see the caller's original token. Every check is mandatory: config sets the values, never turns a check off. The config can live in Git and reload on push, with each new version fully validated before it replaces the last.
+Tsong is an API gateway and RFC 8693 token exchange issuer that centralizes access-token validation. It validates every caller's token against the identity providers you trust, such as Entra, Okta or GitLab, enforcing each route's audience, scope and IP policy from a single config file, and replaces the token with one Tsong signs and scopes to that route. Services then trust one issuer and one JWKS instead of many, and never see the caller's original token. Every check is mandatory: config sets the values, never turns a check off. Tsong reads the config from a file at start, and validates it in full before serving it.
 
 ## Request flow
 
@@ -42,11 +42,11 @@ Tsong caches the new token until shortly before it expires, so a repeat request 
 11. Header hygiene. Tsong strips hop-by-hop and `Forwarded` headers, and sets `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`. It keeps a trusted proxy's values.
 12. Fails closed. 401 for a missing or bad token; 403 for a refused client, audience or scope; 503 when an issuer is unavailable; 502 when the downstream is unreachable; 504 when it stops answering past its read timeout.
 13. Signing keys. Behind the `SigningKey` trait, with PKCS#8 PEM keys today, read through secret references. Each key names its algorithm, and Tsong refuses a key of the wrong type: P-256 for ES256, P-384 for ES384, Ed25519 for EdDSA, and a 2048- to 8192-bit RSA key (`openssl genpkey -algorithm RSA`, not `RSA-PSS`) for the RS and PS algorithms. One key is active for each algorithm the routes sign with, and retiring keys stay published in the JWKS.
-14. Config. One TOML file, read through the `ConfigStore` trait from disk or from a folder on a Git branch. Unknown fields are errors, and Tsong reports every problem at once. A duration is written as .NET's `TimeSpan` writes one, `[d.]hh:mm:ss[.fffffff]`: `"00:15:00"` is 15 minutes, `"1.01:00:00"` is 25 hours.
-15. Reload from Git. A signed push webhook from GitHub or GitLab, or a poll, fetches the branch over SSH with a deploy key. Tsong validates a new config and builds its state in full before swapping it in. A config that fails leaves the old one serving. Tsong audits each reload as a JSON line on stdout, and `GET /status` on the admin listener reports the revision being served and when the store was last read. If Git can't be read, the last good config keeps serving, and metrics show its age and each replica's revision.
+14. Config. One TOML file, read from disk through the `ConfigStore` trait. Unknown fields are errors, and Tsong reports every problem at once. A duration is written as .NET's `TimeSpan` writes one, `[d.]hh:mm:ss[.fffffff]`: `"00:15:00"` is 15 minutes, `"1.01:00:00"` is 25 hours.
+15. Config source. The bootstrap file names the config file, which Tsong reads once at start. Tsong validates the config and builds its state in full before any listener serves, and a config that fails stops the start. Tsong audits the load as a JSON line on stdout, and `GET /status` on the admin listener reports the revision being served, a SHA-256 of the file. To change the config, a pipeline runs `tsong check` and publishes the file, and Tsong reads it on its next start.
 16. Observability. Liveness and readiness on their own listener, Prometheus metrics at `GET /metrics` (cache hits and misses, requests and downstream latency by route, exchanges, JWKS failures and key age, reloads), one JSON audit line per token exchange with the caller's `iss` and `sub`, an audit line for each failed JWKS fetch and for the fetch that recovers, and every request correlated by `X-Request-Id` and W3C `traceparent`.
-17. CLI. `tsong check` validates a config and loads its keys. It warns on empty or accept-anything lists, and on issuer keys trusted for more than a day. `--deny-warnings` fails on warnings in CI. `tsong serve` reads a bootstrap file, deployed with Tsong, that names the config source and the admin and webhook listeners, then runs the gateway and the issuer.
-18. Secret references. A secret field holds a reference, never the secret: a table with one key, the scheme. `{ env = "NAME" }` reads an environment variable, and `{ file = "path" }` reads a file of up to 64 KiB, without one trailing line ending, a relative path taken from the config file's directory. The secret fields are a signing key's `private_key`, a trusted issuer's `client_secret` and the bootstrap file's `webhook.secret`. Anything else in them is refused, as are a missing or empty secret.
+17. CLI. `tsong check` validates a config and loads its keys. It warns on empty or accept-anything lists, and on issuer keys trusted for more than a day. `--deny-warnings` fails on warnings in CI. `tsong serve` reads a bootstrap file, deployed with Tsong, that names the config source and the admin and health listeners, then runs the gateway and the issuer.
+18. Secret references. A secret field holds a reference, never the secret: a table with one key, the scheme. `{ env = "NAME" }` reads an environment variable, and `{ file = "path" }` reads a file of up to 64 KiB, without one trailing line ending, a relative path taken from the config file's directory. The secret fields are a signing key's `private_key` and a trusted issuer's `client_secret`. Anything else in them is refused, as are a missing or empty secret.
 
 ## Quick start
 
@@ -76,7 +76,7 @@ tsong serve <bootstrap.toml>
 
 ### Container
 
-Releases from 0.2.0 publish a signed image, `ghcr.io/dzong-labs/tsong:<tag>`, and a signed Linux binary on the GitHub release; [SECURITY.md](SECURITY.md#verifying-a-release) says how to verify them. The [Containerfile](Containerfile) builds an image that runs `tsong serve /etc/tsong/bootstrap.toml` as an unprivileged user. Its base is Debian slim, which carries the `ssh` a Git source needs. The root filesystem can be read-only: the only writable path is `/var/lib/tsong`, for a Git source's clone. [deploy/podman](deploy/podman) runs it in local podman with a stub bootstrap file and config:
+Releases from 0.2.0 publish a signed image, `ghcr.io/dzong-labs/tsong:<tag>`, and a signed Linux binary on the GitHub release; [SECURITY.md](SECURITY.md#verifying-a-release) says how to verify them. The [Containerfile](Containerfile) builds an image that runs `tsong serve /etc/tsong/bootstrap.toml` as an unprivileged user. Its base is Debian slim, and the root filesystem can be read-only. [deploy/podman](deploy/podman) runs it in local podman with a stub bootstrap file and config:
 
 ```sh
 deploy/podman/run.sh build    # build tsong:local
@@ -90,7 +90,8 @@ Before 1.0, a minor release can change the config or the API; only the latest re
 
 1. Read the release notes for every release you skip.
 2. Run the new binary's `tsong check --deny-warnings` on your config. It refuses a config the new release can't load and names every problem.
-3. Fix what it reports, merge the config, then roll out the new image. With a config from Git, a replica that can't load the new config keeps serving the last good one.
+3. Compare your bootstrap file with [examples/bootstrap.toml](examples/bootstrap.toml). `tsong check` doesn't read the bootstrap file, and a field the new release doesn't know stops it from starting.
+4. Fix what they show, publish the config, then roll out the new image. A replica that can't load the config fails to start and never reports ready.
 
 ## Crates
 
@@ -101,8 +102,7 @@ Before 1.0, a minor release can change the config or the API; only the latest re
 - `tsong-validate`: inbound token validation and JWKS fetching, shared by the issuer and the gateway.
 - `tsong-issuer`: the RFC 8693 token endpoint, JWKS and discovery.
 - `tsong-gateway`: the API gateway and the exchange cache.
-- `tsong-git`: the Git config store and webhook verification.
-- `tsong`: the command, the reloader, and the admin and webhook listeners.
+- `tsong`: the command, the reloader, and the admin and health listeners.
 
 ## Development
 
@@ -118,7 +118,7 @@ git config core.hooksPath .githooks
 
 Tsong runs on Linux, so mutation testing runs on Linux only: in CI on each pull request, or locally in podman with `scripts/linux.sh mutants --workspace`.
 
-Five fuzz targets under `fuzz/` cover the parsers that read hostile input: bearer tokens, config and bootstrap TOML, `X-Forwarded-For`, the token endpoint form and webhook deliveries. Each pull request fuzzes every target for 20 seconds, and the weekly workflow fuzzes each for ten minutes, runs the property tests with 100,000 cases, and checks that the release build is reproducible: `scripts/reproducible.sh` builds the binary twice, from two copies of the tree, and compares them bit for bit. It also measures branch coverage, which needs a nightly toolchain, and shows it in the run's summary. Locally, with a nightly toolchain and `cargo-fuzz`:
+Four fuzz targets under `fuzz/` cover the parsers that read hostile input: bearer tokens, config and bootstrap TOML, `X-Forwarded-For` and the token endpoint form. Each pull request fuzzes every target for 20 seconds, and the weekly workflow fuzzes each for ten minutes, runs the property tests with 100,000 cases, and checks that the release build is reproducible: `scripts/reproducible.sh` builds the binary twice, from two copies of the tree, and compares them bit for bit. It also measures branch coverage, which needs a nightly toolchain, and shows it in the run's summary. Locally, with a nightly toolchain and `cargo-fuzz`:
 
 ```sh
 NIGHTLY=nightly-2026-10-01 scripts/fuzz.sh 60

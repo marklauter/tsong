@@ -58,24 +58,27 @@ impl<W: Write + Send> Audit for Lines<W> {
 /// What `GET /status` reports.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Status {
-    /// The revision being served: the newest commit read whose config is
-    /// the one in use, even when that commit changed only other files.
+    /// The revision being served: the newest revision read whose config is
+    /// the one in use.
     pub revision: String,
     /// When it was loaded, in Unix seconds.
     pub loaded_at: u64,
     /// When the store was last read successfully, in Unix seconds, whether
-    /// or not it had a new revision. While the store can't be read, this
-    /// falls behind and the last good config keeps serving.
+    /// or not it had a new revision. The config is read only at start, so
+    /// this stays fixed after start until roadmap item 32 adds a poll.
     pub fetched_at: u64,
     /// Reloads that swapped in a new revision, the first load included.
     pub reloads: u64,
-    /// Reloads that kept the old state.
+    /// Reloads that kept the old state. It stays 0 until roadmap item 32
+    /// adds a poll.
     pub failed_reloads: u64,
     /// Why the last failed reload failed, in short: `fetch_failed`,
     /// `invalid_config` or `build_failed`. The audit log has the detail.
+    /// It stays unset until roadmap item 32 adds a poll.
     pub last_failure: Option<String>,
     /// Whether the newest config read was rejected as invalid or failed to
-    /// build, so an older one is still served.
+    /// build, so an older one is still served. It stays false until
+    /// roadmap item 32 adds a poll.
     pub tip_rejected: bool,
 }
 
@@ -191,7 +194,7 @@ impl Reloader {
         self.lock().fetched_at = self.clock.unix_seconds();
         let content = fetched.content.clone();
         if content == current.content {
-            // A commit that leaves the config alone is still the one served,
+            // A revision that leaves the config alone is still the one served,
             // and a rejected config that comes back is judged again.
             *self.rejected() = None;
             let mut status = self.lock();

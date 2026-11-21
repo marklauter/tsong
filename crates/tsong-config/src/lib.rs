@@ -24,9 +24,7 @@ use ipnet::IpNet;
 use serde::Deserialize;
 use url::Url;
 
-pub use bootstrap::{
-    Admin, Bootstrap, BootstrapError, CONFIG_FILE, GitHost, GitSource, Health, Source, Webhook,
-};
+pub use bootstrap::{Admin, Bootstrap, BootstrapError, Health, Source};
 pub use lint::Warnings;
 pub use network::{allowed, client_ip};
 pub use parse::ParseError;
@@ -422,8 +420,9 @@ impl Config {
     }
 
     /// Parses and validates a TOML document, taking relative `file` secret
-    /// references from `base_dir`. Without one, as for a config from Git, a
-    /// relative path is a problem: it has nothing to be relative to.
+    /// references from `base_dir`. Without one, as for a store with no
+    /// directory, a relative path is a problem: it has nothing to be
+    /// relative to.
     pub fn from_text(text: &str, base_dir: Option<&Path>) -> Result<Self, ConfigError> {
         let mut config = Self::from_toml(text)?;
         let mut problems = Vec::new();

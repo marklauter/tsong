@@ -12,7 +12,7 @@ set -euo pipefail
 
 seconds="${1:?usage: scripts/fuzz.sh <seconds per target>}"
 cd "$(dirname "$0")/.."
-for target in jwt config forwarded token_form webhook; do
+for target in jwt config forwarded token_form; do
   mkdir -p "fuzz/corpus/$target" "fuzz/seeds/$target"
   echo "fuzzing $target for ${seconds}s"
   cargo "+${NIGHTLY:?set NIGHTLY to the pinned nightly}" fuzz run \

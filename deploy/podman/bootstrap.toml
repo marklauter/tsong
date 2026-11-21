@@ -8,19 +8,6 @@
 store = "file"
 path = "tsong.toml"
 
-# For a Git source, mount the deploy key and known_hosts read-only at
-# /etc/tsong/ssh and keep the clone in /var/lib/tsong, the image's one
-# writable path:
-# [source]
-# store = "git"
-# url = "ssh://git@github.com/example/tsong-config.git"
-# branch = "main"
-# folder = "tsong"
-# checkout = "/var/lib/tsong/config.git"
-# ssh_key = "/etc/tsong/ssh/deploy_key"
-# known_hosts = "/etc/tsong/ssh/known_hosts"
-# poll = "00:05:00"
-
 # ── admin listener ────────────────────────────────────
 # GET /status and GET /metrics, for clients in the config's gateway.allow.
 [admin]

@@ -54,7 +54,8 @@ pub struct Metrics {
     /// Config reloads that found a new revision, by outcome.
     pub reloads: Family<OutcomeLabel, Counter>,
     /// When the config store was last read successfully, in Unix seconds.
-    /// Alert on `time() - tsong_config_last_fetch_timestamp_seconds`.
+    /// The config is read only at start, so this stays fixed after start
+    /// until roadmap item 32 adds a poll.
     pub config_fetched: Gauge,
     /// The revision being served: one series, set to 1. Replicas serving
     /// different revisions show as more than one series across the fleet.

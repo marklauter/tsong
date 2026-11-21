@@ -6,13 +6,6 @@ set -e
 if ! git diff --cached --name-only | grep -qv '\.md$'; then
   exit 0
 fi
-# Git passes a hook its repository and the commit's author through GIT_*
-# variables, such as GIT_DIR, GIT_INDEX_FILE and GIT_AUTHOR_NAME. The
-# tests run git in repositories of their own, so none of those may reach
-# them.
-for name in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do
-  unset "$name"
-done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --quiet

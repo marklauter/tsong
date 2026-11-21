@@ -41,7 +41,7 @@ pub async fn admit(
 
 /// Lets a request through only when the connection's peer address is in
 /// the list: 403 otherwise. No `X-Forwarded-For` is read, for a listener
-/// nothing should proxy, such as the webhook's.
+/// whose callers connect directly, such as the health listener.
 pub async fn admit_peer(
     Extract(allow): Extract<Arc<Vec<IpNet>>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,

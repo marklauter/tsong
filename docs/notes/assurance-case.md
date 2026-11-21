@@ -22,7 +22,7 @@ Tsong's assurance case sets out what Tsong guarantees, the threats it guards aga
 
 ## Threat model and trust boundaries
 
-The [threat model](threat-model.md) names the six sources of input, how far each is trusted, and what each may control: callers and downstreams are untrusted, trusted issuers are trusted only for their own tokens, the config from Git is trusted less than the host, and the host is trusted. The trust boundaries are the gateway and issuer listeners, which face callers; the outbound connections to downstreams and trusted issuers; the config store; and the bootstrap file and environment, which belong to the host.
+The [threat model](threat-model.md) names the five sources of input, how far each is trusted, and what each may control: callers and downstreams are untrusted, trusted issuers are trusted only for their own tokens, the config is trusted less than the host, and the host is trusted. The trust boundaries are the gateway and issuer listeners, which face callers; the outbound connections to downstreams and trusted issuers; the config store; and the bootstrap file and environment, which belong to the host.
 
 ## Secure design
 
@@ -35,7 +35,7 @@ The design applies Saltzer and Schroeder's principles, and the requirements foll
 - **Least common mechanism** (4): each trusted issuer has its own key cache and subject prefix, so issuers share no trust.
 - **Economy of mechanism** (5): one config file, one immutable state per config swapped whole, one crate per job.
 - **Open design** (6): security rests on keys and secrets, never on secrecy of the code; secrets are references, never values.
-- **Limited attack surface**: the admin, webhook and health listeners are separate, configured only by the host, each with its own allow list.
+- **Limited attack surface**: the admin and health listeners are separate, configured only by the host, each with its own allow list.
 - **Allowlists for input** (7): algorithms, issuers, audiences, scopes, client ranges, hosts and secret schemes are all allowlists, and unknown config fields are errors.
 
 ## Common weaknesses and their countermeasures
@@ -48,8 +48,7 @@ The design applies Saltzer and Schroeder's principles, and the requirements foll
 | SSRF through discovery or JWKS URLs (CWE-918) | https only, the JWKS on the issuer's scheme, timeouts on every fetch | `crates/tsong-validate/tests/fetch.rs` |
 | Secrets in config or logs (CWE-798, CWE-532) | Secret references only; a value written in by mistake refused without being quoted; redacted `Debug` | `crates/tsong-config/tests/config.rs`, `crates/tsong-secrets/tests/secrets.rs` |
 | Memory corruption (CWE-787, CWE-416) | Safe Rust only: the workspace forbids `unsafe` | The workspace lints, and a CI check that every crate inherits them |
-| Crashes on malformed input (CWE-20, CWE-248) | Panics denied by lint, tests included; checked arithmetic | Five fuzz targets with AddressSanitizer and overflow checks: `fuzz/` |
-| Timing attacks on the webhook secret (CWE-208) | Constant-time comparison; a secret of at least 16 bytes | `verify` in `crates/tsong-git/src/webhook.rs`; the length test in `crates/tsong/tests/serve_git.rs` |
+| Crashes on malformed input (CWE-20, CWE-248) | Panics denied by lint, tests included; checked arithmetic | Four fuzz targets with AddressSanitizer and overflow checks: `fuzz/` |
 | Vulnerable or untrusted dependencies (CWE-1104) | cargo audit, cargo-deny, Dependabot, actions pinned by SHA | CI's `audit` and `deny` jobs |
 
 ## Evidence that this stays true

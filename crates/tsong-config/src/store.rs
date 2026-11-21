@@ -1,4 +1,4 @@
-//! Where a config comes from: a file, or a Git branch, behind one trait.
+//! Where a config comes from, behind one trait. Tsong has one store, a file.
 //! A store only fetches the config's text; parsing and validating it is
 //! the caller's, through [`Fetched::parse`].
 
@@ -14,17 +14,16 @@ use crate::{Config, ConfigError};
 #[derive(Debug, Clone)]
 pub struct Fetched {
     pub text: String,
-    /// What identifies where the config was read: a commit ID, or a hash
-    /// of a file's contents.
+    /// What identifies the version read: a version the store assigns, or a
+    /// hash of the text.
     pub revision: String,
-    /// What identifies the config's text: the file's blob ID in Git, or a
-    /// hash of its contents. Equal contents hold equal configs, even at
-    /// different revisions.
+    /// What identifies the config's text: a hash of the text. Equal contents
+    /// hold equal configs, even at different revisions.
     pub content: String,
     /// Who made this revision, when the store knows.
     pub author: Option<String>,
-    /// The directory relative key paths are taken from. A config with none,
-    /// such as one from Git, must give its key paths in full.
+    /// The directory relative key paths are taken from. A config from a
+    /// store with no directory gives its key paths in full.
     pub base_dir: Option<PathBuf>,
 }
 

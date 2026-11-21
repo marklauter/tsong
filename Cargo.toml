@@ -13,8 +13,6 @@ axum = "0.8.9"
 base64 = "0.23.1"
 futures-util = { version = "0.3.34", default-features = false }
 getrandom = "0.4.3"
-gix = { version = "0.90.0", default-features = false, features = ["blocking-network-client", "sha1"] }
-hmac = "0.13.0"
 http-body-util = "0.1.5"
 ipnet = { version = "2.12.2", features = ["serde"] }
 jsonwebtoken = { version = "12.0.0", default-features = false, features = ["aws_lc_rs"] }
@@ -35,7 +33,6 @@ tower = "0.5.3"
 tsong-clock = { version = "0.1.0", path = "crates/tsong-clock" }
 tsong-config = { version = "0.1.0", path = "crates/tsong-config" }
 tsong-gateway = { version = "0.1.0", path = "crates/tsong-gateway" }
-tsong-git = { version = "0.1.0", path = "crates/tsong-git" }
 tsong-issuer = { version = "0.1.0", path = "crates/tsong-issuer" }
 tsong-keys = { version = "0.1.0", path = "crates/tsong-keys" }
 tsong-secrets = { version = "0.1.0", path = "crates/tsong-secrets" }

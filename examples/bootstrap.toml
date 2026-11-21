@@ -5,22 +5,10 @@
 # "00:15:00" is 15 minutes, "1.01:00:00" is 25 hours.
 
 # Config source
-# A folder on a Git branch, reloaded when the branch moves. Tsong reads
-# tsong.toml from the folder at the branch's tip.
+# A file on disk, relative to this file. It is read once, at start.
 [source]
-store = "git"
-url = "ssh://git@github.com/example/tsong-config.git"
-branch = "main"
-folder = "tsong"                          # "" for the repository's root
-checkout = "/var/lib/tsong/config.git"    # the bare clone Tsong keeps
-ssh_key = "/etc/tsong/deploy_key"         # a read-only deploy key
-known_hosts = "/etc/tsong/known_hosts"    # the only host keys SSH accepts
-poll = "00:05:00"                         # fetch this often when no webhook arrives
-
-# Or a file on disk, relative to this file, read once:
-# [source]
-# store = "file"
-# path = "tsong.toml"
+store = "file"
+path = "tsong.toml"
 
 # Admin listener
 # GET /status and GET /metrics. Only clients in the served config's
@@ -28,24 +16,10 @@ poll = "00:05:00"                         # fetch this often when no webhook arr
 [admin]
 listen = "0.0.0.0:8445"
 
-# Webhook listener
-# POST /hooks/config, on its own listener. Its allow list is deployed here,
-# never loaded from Git, and holds only the Git host's delivery addresses
-# (GitHub publishes them as "hooks" at api.github.com/meta). It is checked
-# against each connection's own address; nothing should proxy this listener.
-[webhook]
-listen = "0.0.0.0:8446"
-# An example; take the current list from api.github.com/meta.
-allow = ["192.30.252.0/22", "185.199.108.0/22", "140.82.112.0/20", "143.55.64.0/20"]
-host = "github"                           # or "gitlab"
-# A secret reference: { env = "NAME" } or { file = "path" }.
-# At least 16 bytes; a random 32-byte value is better.
-secret = { env = "TSONG_WEBHOOK_SECRET" }
-
 # Health listener
-# GET /health/live and GET /health/ready, for the load balancer. Like the
-# webhook's, its allow list is deployed here and checked against each
-# connection's own address.
+# GET /health/live and GET /health/ready, for the load balancer. Its allow
+# list is deployed here and checked against each connection's own address;
+# no X-Forwarded-For is read.
 [health]
 listen = "0.0.0.0:8447"
 allow = ["10.20.0.0/16"]                  # the load balancer's subnets

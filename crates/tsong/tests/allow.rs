@@ -124,7 +124,7 @@ fn peer_guarded(allow: &[&str]) -> TestResult<Router> {
 }
 
 #[tokio::test]
-async fn the_webhook_admits_only_peers_in_its_own_list() -> TestResult {
+async fn a_peer_list_admits_only_its_own_peers() -> TestResult {
     let router = peer_guarded(&["192.30.252.0/22"])?;
     assert_eq!(
         status(&router, "192.30.252.10:1", None).await?,

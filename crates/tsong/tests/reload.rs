@@ -8,7 +8,6 @@ use axum::http::{Request, StatusCode};
 use common::*;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use tokio::sync::Notify;
 use tower::ServiceExt;
 use tsong::reload::{Outcome, Reloader, Status};
 use tsong::state::{State, current};
@@ -306,56 +305,6 @@ async fn requests_reach_the_current_state() -> TestResult {
     Ok(())
 }
 
-/// Waits until `reloader` has made `reloads` reloads.
-async fn reloaded(reloader: &Reloader, reloads: u64) -> TestResult {
-    for _ in 0..200 {
-        if status(reloader).reloads >= reloads {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    Err(format!("never reached {reloads} reloads").into())
-}
-
-#[tokio::test]
-async fn the_loop_reloads_on_each_trigger_and_stops_when_told() -> TestResult {
-    let f = Fixture::new()?;
-    let reloader = Arc::new(f.reloader(&f.text("https://one.test", 8444, "")).await?);
-    let trigger = Arc::new(Notify::new());
-    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let task = {
-        let (reloader, trigger) = (reloader.clone(), trigger.clone());
-        tokio::spawn(async move {
-            tsong::reload_loop(&reloader, &trigger, Duration::from_secs(3600), async {
-                let _ = stopped.await;
-            })
-            .await;
-        })
-    };
-    f.store
-        .push(Ok(fetched(&f.text("https://two.test", 8444, ""), "r2")?));
-    trigger.notify_one();
-    reloaded(&reloader, 2).await?;
-    stop.send(()).map_err(|()| "the loop stopped early")?;
-    tokio::time::timeout(Duration::from_secs(5), task).await??;
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_loop_reloads_on_each_poll() -> TestResult {
-    let f = Fixture::new()?;
-    let reloader = Arc::new(f.reloader(&f.text("https://one.test", 8444, "")).await?);
-    f.store
-        .push(Ok(fetched(&f.text("https://two.test", 8444, ""), "r2")?));
-    let trigger = Notify::new();
-    let polling = tsong::reload_loop(&reloader, &trigger, Duration::from_millis(10), async {
-        let _ = reloaded(&reloader, 2).await;
-    });
-    tokio::time::timeout(Duration::from_secs(5), polling).await?;
-    assert_eq!(reloader.subscribe().borrow().revision, "r2");
-    Ok(())
-}
-
 #[test]
 fn lines_are_written_one_to_a_line() {
     use tsong::reload::{Audit, Lines};
@@ -448,49 +397,6 @@ async fn a_failed_fetch_is_retried_every_time() -> TestResult {
         status(&reloader).last_failure.as_deref(),
         Some("fetch_failed")
     );
-    Ok(())
-}
-
-/// A store whose load never finishes, like a fetch stuck on a dead
-/// connection.
-struct Stalled;
-
-impl tsong_config::ConfigStore for Stalled {
-    fn load(&self) -> tsong_config::LoadFuture<'_> {
-        Box::pin(std::future::pending())
-    }
-}
-
-#[tokio::test]
-async fn shutdown_does_not_wait_for_a_stalled_reload() -> TestResult {
-    let f = Fixture::new()?;
-    let clock: Arc<dyn Clock> = f.clock.clone();
-    let first = State::build(
-        snapshot(&f.text("https://one.test", 8444, ""), "r1")?,
-        clock.clone(),
-    )
-    .await?;
-    let reloader = Arc::new(Reloader::new(
-        Box::new(Stalled),
-        first,
-        f.lines.clone(),
-        clock,
-    ));
-    let trigger = Arc::new(Notify::new());
-    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let task = {
-        let (reloader, trigger) = (reloader.clone(), trigger.clone());
-        tokio::spawn(async move {
-            tsong::reload_loop(&reloader, &trigger, Duration::from_secs(3600), async {
-                let _ = stopped.await;
-            })
-            .await;
-        })
-    };
-    trigger.notify_one();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    stop.send(()).map_err(|()| "the loop stopped early")?;
-    tokio::time::timeout(Duration::from_secs(5), task).await??;
     Ok(())
 }
 

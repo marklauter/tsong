@@ -53,7 +53,7 @@ allowed_scopes = []
 
 An empty `allowed_*` list denies every request. `"*"` accepts any value. IP lists follow the same rule: an empty `gateway.allow`, or an empty route `allow`, denies every client, and `["0.0.0.0/0", "::/0"]` allows every client. Validation stays mandatory: the config sets values, and no value switches a check off.
 
-`[[routes]]` deserializes as `Vec<Route>`. `RouteTable` in `crates/tsong-config/src/lib.rs` indexes it as a `HashMap<String, Route>` keyed by lowercased host, and the issuer and the gateway each hold one. The allowed audience and scope lists stay `Vec<String>`: they hold a few entries, and scanning a few entries costs less than hashing. A config reload, roadmap item 7, will build a new table and swap it in.
+`[[routes]]` deserializes as `Vec<Route>`. `RouteTable` in `crates/tsong-config/src/lib.rs` indexes it as a `HashMap<String, Route>` keyed by lowercased host, and the issuer and the gateway each hold one. The allowed audience and scope lists stay `Vec<String>`: they hold a few entries, and scanning a few entries costs less than hashing. A config reload, which roadmap item 32 adds, builds a new table and swaps it in.
 
 ## Exchange
 

@@ -1,7 +1,6 @@
 //! The `tsong` command: `check` validates a config, loads its keys and
 //! reports its warnings; `serve` reads a bootstrap file, then runs the
-//! gateway and the token exchange issuer, reloading the config when its
-//! Git branch moves.
+//! gateway and the token exchange issuer.
 
 pub mod admin;
 pub mod allow;
@@ -17,18 +16,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::net::TcpListener;
-use tokio::sync::{Notify, watch};
+use tokio::sync::watch;
 use tsong_clock::{Clock, SystemClock};
 use tsong_config::{
     Bootstrap, BootstrapError, ConfigError, ConfigStore, FileStore, Source, Warnings,
 };
 use tsong_gateway::GatewayError;
-use tsong_git::GitStore;
 use tsong_keys::{KeyError, KeySet};
-use tsong_secrets::{SecretError, Secrets};
+use tsong_secrets::Secrets;
 use tsong_validate::{HttpFetcher, JwksFetcher};
 
-use crate::admin::Hook;
 use crate::reload::{Audit, Lines, Reloader};
 use crate::state::State;
 use crate::telemetry::{Metrics, ObservedFetcher};
@@ -36,10 +33,6 @@ use crate::telemetry::{Metrics, ObservedFetcher};
 /// How to run the command.
 pub const USAGE: &str =
     "usage: tsong check [--deny-warnings] <config.toml> | tsong serve <bootstrap.toml>";
-
-/// The fewest bytes a webhook secret may have: 128 bits, as a symmetric
-/// key needs.
-pub const MIN_WEBHOOK_SECRET: usize = 16;
 
 /// The flag that makes `check` fail on warnings.
 pub const DENY_WARNINGS: &str = "--deny-warnings";
@@ -59,10 +52,6 @@ pub enum Error {
     Gateway(#[from] GatewayError),
     #[error("{0}warnings are denied")]
     Warnings(Warnings),
-    #[error("webhook: {0}")]
-    Webhook(SecretError),
-    #[error("webhook: the secret must be at least {MIN_WEBHOOK_SECRET} bytes")]
-    WeakWebhookSecret,
     #[error("serving: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -106,15 +95,15 @@ pub async fn check(path: &Path, deny_warnings: bool) -> Result<String, Error> {
 
 /// Serves Tsong for the bootstrap file at `path` until `shutdown`
 /// completes: the issuer on `issuer.listen`, the gateway on
-/// `gateway.listen`, and the admin listener when the bootstrap file has
-/// one. A git source is reloaded on each webhook delivery and poll.
+/// `gateway.listen`, and the admin and health listeners when the
+/// bootstrap file has them. The config is read once.
 pub async fn serve_until(
     path: &Path,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
     let bootstrap = Bootstrap::load(path)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let (store, poll) = store(&bootstrap.source);
+    let store = store(&bootstrap.source);
     let metrics = Arc::new(Metrics::default());
     let audit: Arc<dyn Audit> = Arc::new(Lines::new(std::io::stdout()));
     let fetcher: Arc<dyn JwksFetcher> = Arc::new(ObservedFetcher::new(
@@ -141,7 +130,6 @@ pub async fn serve_until(
             .with_fetcher(fetcher)
             .with_secrets(secrets.clone()),
     );
-    let trigger = Arc::new(Notify::new());
     let admin = match &bootstrap.admin {
         Some(admin) => {
             let router = admin::status_router(reloader.status(), metrics).layer(
@@ -150,30 +138,6 @@ pub async fn serve_until(
             Some((TcpListener::bind(admin.listen).await?, router))
         }
         None => None,
-    };
-    let webhook = match (&bootstrap.webhook, &bootstrap.source) {
-        (Some(webhook), Source::Git(git)) => {
-            let secret = secrets
-                .resolve(&webhook.secret)
-                .await
-                .map_err(Error::Webhook)?;
-            if secret.expose().len() < MIN_WEBHOOK_SECRET {
-                return Err(Error::WeakWebhookSecret);
-            }
-            let hook = Hook {
-                host: webhook.host,
-                secret,
-                branch: git.branch.clone(),
-            };
-            let router = admin::webhook_router(hook, trigger.clone()).layer(
-                axum::middleware::from_fn_with_state(
-                    Arc::new(webhook.allow.clone()),
-                    allow::admit_peer,
-                ),
-            );
-            Some((TcpListener::bind(webhook.listen).await?, router))
-        }
-        _ => None,
     };
     let ready = Arc::new(AtomicBool::new(false));
     let health = match &bootstrap.health {
@@ -192,7 +156,7 @@ pub async fn serve_until(
     // The config is loaded and every listener is bound.
     ready.store(true, Ordering::Release);
 
-    // One shutdown, heard by every server and the reload loop.
+    // One shutdown, heard by every server.
     let (stop, stopping) = watch::channel(false);
     let stopped = |mut stopping: watch::Receiver<bool>| async move {
         let _ = stopping.wait_for(|stop| *stop).await;
@@ -227,31 +191,21 @@ pub async fn serve_until(
     )
     .with_graceful_shutdown(stopped(stopping.clone()));
     let admin_server = optional(admin, stopped(stopping.clone()));
-    let webhook_server = optional(webhook, stopped(stopping.clone()));
-    let health_server = optional(health, stopped(stopping.clone()));
-    let reloads = async move {
-        if let Some(poll) = poll {
-            reload_loop(&reloader, &trigger, poll, stopped(stopping)).await;
-        }
-        Ok(())
-    };
+    let health_server = optional(health, stopped(stopping));
     tokio::try_join!(
         signal,
         async { issuer_server.await },
         async { gateway_server.await },
         admin_server,
-        webhook_server,
         health_server,
-        reloads,
     )?;
     Ok(())
 }
 
-/// The store for `source`, and how often to poll it: never for a file.
-fn store(source: &Source) -> (Box<dyn ConfigStore>, Option<Duration>) {
+/// The store for `source`.
+fn store(source: &Source) -> Box<dyn ConfigStore> {
     match source {
-        Source::Git(git) => (Box::new(GitStore::new(git)), Some(git.poll)),
-        Source::File { path } => (Box::new(FileStore::new(path)), None),
+        Source::File { path } => Box::new(FileStore::new(path)),
     }
 }
 
@@ -270,29 +224,6 @@ async fn optional(
             .await
         }
         None => Ok(()),
-    }
-}
-
-/// Reloads on each trigger and each poll until `stopped` completes, even
-/// when a reload is in progress.
-pub async fn reload_loop(
-    reloader: &Reloader,
-    trigger: &Notify,
-    poll: Duration,
-    stopped: impl Future<Output = ()>,
-) {
-    tokio::pin!(stopped);
-    loop {
-        tokio::select! {
-            () = &mut stopped => return,
-            () = trigger.notified() => {}
-            () = tokio::time::sleep(poll) => {}
-        }
-        // A shutdown cancels a reload in progress, which interrupts its fetch.
-        tokio::select! {
-            () = &mut stopped => return,
-            _ = reloader.reload() => {}
-        }
     }
 }
 

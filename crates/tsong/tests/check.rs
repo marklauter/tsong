@@ -287,6 +287,89 @@ async fn serve_runs_the_issuer_and_gateway_until_shut_down() -> TestResult {
     Ok(())
 }
 
+/// GETs `url` once it answers, and returns its status and JSON body.
+async fn get_json(url: &str) -> TestResult<(u16, Value)> {
+    let mut last = String::new();
+    for _ in 0..100 {
+        match reqwest::get(url).await {
+            Ok(response) => return Ok((response.status().as_u16(), response.json().await?)),
+            Err(error) => last = error.to_string(),
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    Err(format!("{url} never answered: {last}").into())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn serve_runs_the_admin_and_health_listeners_and_drains() -> TestResult {
+    let port = free_port()?;
+    let admin = free_port()?;
+    let health = free_port()?;
+    let dir = tempfile::tempdir()?;
+    let path = write_config(dir.path(), port, true)?;
+    let bootstrap = boot(&path);
+    std::fs::write(
+        &bootstrap,
+        format!(
+            r#"[source]
+store = "file"
+path = "tsong.toml"
+
+[admin]
+listen = "127.0.0.1:{admin}"
+
+[health]
+listen = "127.0.0.1:{health}"
+allow = ["127.0.0.0/8"]
+drain = "00:00:05"
+"#
+        ),
+    )?;
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        tsong::serve_until(&bootstrap, async {
+            let _ = stopped.await;
+        })
+        .await
+    });
+
+    let (code, status) = get_json(&format!("http://127.0.0.1:{admin}/status")).await?;
+    assert_eq!(code, 200);
+    assert_eq!(status.get("reloads"), Some(&json!(1)));
+    assert_eq!(status.get("failed_reloads"), Some(&json!(0)));
+    assert_eq!(status.get("tip_rejected"), Some(&json!(false)));
+    let metrics = reqwest::get(format!("http://127.0.0.1:{admin}/metrics")).await?;
+    assert_eq!(metrics.status().as_u16(), 200);
+    let metrics = metrics.text().await?;
+    assert!(
+        metrics.contains("tsong_config_last_fetch_timestamp_seconds"),
+        "{metrics}"
+    );
+    let live = format!("http://127.0.0.1:{health}/health/live");
+    assert_eq!(get_json(&live).await?, (200, json!({ "live": true })));
+    let ready = format!("http://127.0.0.1:{health}/health/ready");
+    assert_eq!(get_json(&ready).await?, (200, json!({ "ready": true })));
+
+    // On shutdown, readiness fails while the listeners stay open to drain.
+    stop.send(()).map_err(|()| "the server stopped early")?;
+    let mut answer = None;
+    for _ in 0..100 {
+        answer = Some(get_json(&ready).await?);
+        if answer.as_ref().map(|(code, _)| *code) != Some(200) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(answer, Some((503, json!({ "ready": false }))));
+    assert!(
+        !server.is_finished(),
+        "the listeners closed before the drain"
+    );
+    assert_eq!(get_json(&live).await?, (200, json!({ "live": true })));
+    tokio::time::timeout(Duration::from_secs(20), server).await???;
+    Ok(())
+}
+
 #[test]
 fn the_binary_exits_by_outcome() -> TestResult {
     let dir = tempfile::tempdir()?;
